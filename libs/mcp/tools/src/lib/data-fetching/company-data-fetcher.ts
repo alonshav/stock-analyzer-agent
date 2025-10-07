@@ -20,19 +20,24 @@ interface FetchOptions {
 }
 
 export class CompanyDataFetcher {
-  private fmpAdapter: FMPAdapter;
+  private fmpAdapter: FMPAdapter | null = null;
   private cacheManager: CacheManager;
   private rateLimiter: RateLimiter;
 
   constructor(cacheManager: CacheManager, rateLimiter: RateLimiter) {
-    const apiKey = process.env['FMP_API_KEY'];
-    if (!apiKey) {
-      throw new Error('FMP_API_KEY environment variable is required');
-    }
-
-    this.fmpAdapter = new FMPAdapter(apiKey);
     this.cacheManager = cacheManager;
     this.rateLimiter = rateLimiter;
+  }
+
+  private ensureAdapter(): FMPAdapter {
+    if (!this.fmpAdapter) {
+      const apiKey = process.env['FMP_API_KEY'];
+      if (!apiKey) {
+        throw new Error('FMP_API_KEY environment variable is required');
+      }
+      this.fmpAdapter = new FMPAdapter(apiKey);
+    }
+    return this.fmpAdapter;
   }
 
   async fetchData(
@@ -124,27 +129,29 @@ export class CompanyDataFetcher {
 
     let data: any;
 
+    const adapter = this.ensureAdapter();
+
     switch (dataType) {
       case 'profile':
-        data = await this.fmpAdapter.getCompanyProfile(ticker);
+        data = await adapter.getCompanyProfile(ticker);
         break;
       case 'quote':
-        data = await this.fmpAdapter.getQuote(ticker);
+        data = await adapter.getQuote(ticker);
         break;
       case 'income_statement':
-        data = await this.fmpAdapter.getIncomeStatements(ticker, limit, period);
+        data = await adapter.getIncomeStatements(ticker, limit, period);
         break;
       case 'balance_sheet':
-        data = await this.fmpAdapter.getBalanceSheets(ticker, limit, period);
+        data = await adapter.getBalanceSheets(ticker, limit, period);
         break;
       case 'cash_flow':
-        data = await this.fmpAdapter.getCashFlowStatements(ticker, limit, period);
+        data = await adapter.getCashFlowStatements(ticker, limit, period);
         break;
       case 'ratios':
-        data = await this.fmpAdapter.getFinancialRatios(ticker, limit, period);
+        data = await adapter.getFinancialRatios(ticker, limit, period);
         break;
       case 'key_metrics':
-        data = await this.fmpAdapter.getKeyMetrics(ticker, limit, period);
+        data = await adapter.getKeyMetrics(ticker, limit, period);
         break;
       default:
         throw new Error(`Unsupported data type: ${dataType}`);
