@@ -19,7 +19,7 @@ The Model Context Protocol (MCP) allows AI assistants like Cursor to access exte
 
 ### 2. Configure Cursor
 
-#### Option A: Using npx (from GitHub)
+#### Option A: Using npx (from GitHub) - Recommended
 
 Add this to your Cursor MCP settings (`~/.cursor/mcp.json` or `%APPDATA%\Cursor\mcp.json` on Windows):
 
@@ -36,6 +36,8 @@ Add this to your Cursor MCP settings (`~/.cursor/mcp.json` or `%APPDATA%\Cursor\
   }
 }
 ```
+
+**Note**: The first time Cursor starts, npx will download and build the server (takes ~30 seconds). Subsequent starts will be instant as npx caches the package.
 
 #### Option B: Using Local Build
 
