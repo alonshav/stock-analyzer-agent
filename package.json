@@ -4,7 +4,7 @@
   "license": "MIT",
   "bin": "./dist/apps/mcp-server/main.js",
   "files": [
-    "dist"
+    "dist/apps/mcp-server"
   ],
   "scripts": {
     "build:telegram-bot": "nx build telegram-bot --configuration=production",
