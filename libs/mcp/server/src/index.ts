@@ -1,1 +1,1 @@
-export * from './lib/server';
+export * from './lib/mcp-server';
