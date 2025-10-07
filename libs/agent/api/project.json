@@ -1,0 +1,19 @@
+{
+  "name": "agent-api",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/agent/api/src",
+  "projectType": "library",
+  "tags": ["type:library", "scope:agent"],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/libs/agent/api",
+        "main": "libs/agent/api/src/index.ts",
+        "tsConfig": "libs/agent/api/tsconfig.lib.json",
+        "assets": ["libs/agent/api/*.md"]
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "bot-telegram",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/bot/telegram/src",
+  "projectType": "library",
+  "tags": ["type:library", "scope:bot"],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/libs/bot/telegram",
+        "main": "libs/bot/telegram/src/index.ts",
+        "tsConfig": "libs/bot/telegram/tsconfig.lib.json",
+        "assets": ["libs/bot/telegram/*.md"]
+      }
+    }
+  }
+}

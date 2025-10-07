@@ -1,0 +1,19 @@
+{
+  "name": "mcp-tools",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/mcp/tools/src",
+  "projectType": "library",
+  "tags": ["type:library", "scope:mcp"],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/libs/mcp/tools",
+        "main": "libs/mcp/tools/src/index.ts",
+        "tsConfig": "libs/mcp/tools/tsconfig.lib.json",
+        "assets": ["libs/mcp/tools/*.md"]
+      }
+    }
+  }
+}

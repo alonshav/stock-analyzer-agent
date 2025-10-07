@@ -1,0 +1,34 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "es2015",
+    "module": "esnext",
+    "lib": ["es2020", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@stock-analyzer/agent/api": ["libs/agent/api/src/index.ts"],
+      "@stock-analyzer/agent/core": ["libs/agent/core/src/index.ts"],
+      "@stock-analyzer/bot/common": ["libs/bot/common/src/index.ts"],
+      "@stock-analyzer/bot/telegram": ["libs/bot/telegram/src/index.ts"],
+      "@stock-analyzer/mcp/integrations": [
+        "libs/mcp/integrations/src/index.ts"
+      ],
+      "@stock-analyzer/mcp/server": ["libs/mcp/server/src/index.ts"],
+      "@stock-analyzer/mcp/tools": ["libs/mcp/tools/src/index.ts"],
+      "@stock-analyzer/shared/config": ["libs/shared/config/src/index.ts"],
+      "@stock-analyzer/shared/schemas": ["libs/shared/schemas/src/index.ts"],
+      "@stock-analyzer/shared/types": ["libs/shared/types/src/index.ts"],
+      "@stock-analyzer/shared/utils": ["libs/shared/utils/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "tmp"]
+}
