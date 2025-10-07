@@ -219,27 +219,27 @@ export class AgentService {
 
 ## MCP Server Standalone Usage
 
-The MCP Server can be run as a standalone service for external MCP clients:
+The MCP Server can be run as a standalone service for external MCP clients (Claude Desktop, Cursor, etc.):
 
 ```bash
-# Build and run
+# Build and run locally
 npm run build:mcp-server
 npm run start:mcp-server
 
-# Or via npx (after publishing)
-npx stock-analyzer-mcp
+# Or via npx from GitHub (recommended for external users)
+npx -y github:alonshav/stock-analyzer-agent
 
 # Requires environment variable
 export FMP_API_KEY=your-api-key
 ```
 
-**Claude Desktop Configuration:**
+**MCP Client Configuration (Claude Desktop, Cursor, etc.):**
 ```json
 {
   "mcpServers": {
     "stock-analyzer": {
-      "command": "node",
-      "args": ["/path/to/dist/apps/mcp-server/main.js"],
+      "command": "npx",
+      "args": ["-y", "github:alonshav/stock-analyzer-agent"],
       "env": {
         "FMP_API_KEY": "your-api-key"
       }
@@ -248,7 +248,12 @@ export FMP_API_KEY=your-api-key
 }
 ```
 
-The `package.json` includes a `bin` field pointing to `dist/apps/mcp-server/main.js` with shebang for direct execution.
+**Critical Implementation Details:**
+- Package name is `stock-analyzer-mcp` (NOT `@stock-analyzer/source`) to avoid shell conflicts
+- `dist/apps/mcp-server` is committed to git for npx from GitHub
+- `files` field in package.json includes only `dist/apps/mcp-server`
+- API key validation is lazy (checked on tool execution, not server startup)
+- Shebang `#!/usr/bin/env node` enables direct execution
 
 ## SSE Streaming Pattern
 
@@ -321,10 +326,18 @@ Located in `libs/shared/types/src/lib/company.types.ts`:
 
 - **Agent & Telegram Bot**: Use `@nx/webpack` with NestJS
 - **MCP Server**: Uses `@nx/esbuild` with:
-  - `bundle: false` (preserves library structure)
-  - `format: cjs` (CommonJS for Node.js)
+  - `bundle: false` (preserves library structure for internal imports)
+  - `format: cjs` (CommonJS for Node.js compatibility)
   - `banner: { js: "#!/usr/bin/env node" }` (adds shebang for direct execution)
   - `generatePackageJson: true` (creates standalone package.json)
+  - Build script includes `chmod +x` for executable permissions
+
+**Important**: When modifying MCP server code, rebuild and commit the dist folder:
+```bash
+npm run build:mcp-server
+git add dist/apps/mcp-server
+git commit -m "Update MCP server build"
+```
 
 ## Testing Strategy
 
@@ -359,7 +372,10 @@ npm run start:agent
 2. Export from `libs/mcp/tools/src/index.ts`
 3. Register in `ToolRegistry.getTools()` with MCP Tool schema
 4. Add handler method in `ToolRegistry.executeTool()`
-5. Tool is now available to both Agent and MCP Server
+5. Rebuild and commit MCP server: `npm run build:mcp-server && git add dist/apps/mcp-server`
+6. Tool is now available to both Agent and MCP Server
+
+**Critical**: API dependencies should use lazy initialization (like `CompanyDataFetcher.ensureAdapter()`) to allow MCP server to start without API keys and validate them only when tools are called.
 
 ### Adding a New API Integration
 
