@@ -1,0 +1,38 @@
+# Only exclude development and cache files from npm package
+# Source files are needed for postinstall build
+
+# IDE files
+.idea
+.vscode
+*.sublime-workspace
+.cursor/
+
+# Cache and temp
+.nx/cache
+.nx/workspace-data
+tmp
+out-tsc
+
+# Tests
+coverage
+*.spec.ts
+*.spec.js
+
+# Development
+.git
+.github
+.eslintrc.json
+.prettierrc
+.editorconfig
+
+# Logs
+npm-debug.log
+yarn-error.log
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Don't exclude dist - postinstall creates it
+# Don't exclude node_modules - npm handles this
+# Don't exclude source files - needed for build

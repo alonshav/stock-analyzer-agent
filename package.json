@@ -3,8 +3,11 @@
   "version": "1.0.0",
   "license": "MIT",
   "bin": "./dist/apps/mcp-server/main.js",
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "postinstall": "npm run build:mcp-server",
+    "prepare": "npm run build:mcp-server || true",
     "build:telegram-bot": "nx build telegram-bot --configuration=production",
     "build:agent": "nx build agent --configuration=production",
     "build:mcp-server": "nx build mcp-server --configuration=production && chmod +x dist/apps/mcp-server/main.js",

@@ -1,7 +1,10 @@
 # See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
 # compiled output
-dist
+# Note: dist/apps/mcp-server is committed for npx from GitHub
+dist/apps/agent
+dist/apps/telegram-bot
+dist/libs
 tmp
 out-tsc
 
