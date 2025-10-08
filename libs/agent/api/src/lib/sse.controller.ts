@@ -16,9 +16,9 @@ export class SSEController {
   @Get(':ticker/stream')
   async streamAnalysis(
     @Param('ticker') ticker: string,
-    @Query('userId') userId: string = 'anonymous',
+    @Query('userId') userId = 'anonymous',
     @Query('sessionId') sessionId: string,
-    @Query('platform') platform: string = 'web',
+    @Query('platform') platform = 'web',
     @Query('prompt') userPrompt: string,
     @Res() res: Response,
     @Req() req: Request
@@ -71,7 +71,7 @@ export class SSEController {
         const completeResponse: StreamResponse = {
           type: 'complete',
           ticker: data.ticker,
-          fullAnalysis: data.fullAnalysis,
+          ...(data.fullAnalysis && { fullAnalysis: data.fullAnalysis }),
           executiveSummary: data.executiveSummary,
           metadata: data.metadata,
         };

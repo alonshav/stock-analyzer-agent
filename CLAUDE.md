@@ -42,9 +42,10 @@ Stock Analyzer is an Nx monorepo for AI-powered financial analysis with three ap
 2. **Agent imports tools directly** from `@stock-analyzer/mcp/tools` via `createToolRegistry()`
 3. **MCP Server is standalone** - runs independently for external MCP clients
 4. **Tools are dual-use** - same implementations used by both Agent (direct) and MCP Server (stdio)
-5. **SSE streams thought process** - not final reports
-6. **Two-query approach** - full analysis + executive summary
-7. **External PDF generation** - via Anvil API (no Puppeteer)
+5. **SSE streams analysis process** - real-time text chunks and tool usage events
+6. **Single-query approach** - generates executive summary directly (optimized for speed)
+7. **Extended thinking enabled** - uses `maxThinkingTokens: 10000` for deeper analysis
+8. **External PDF generation** - via Anvil API (no Puppeteer)
 
 ## Repository Structure
 
@@ -194,25 +195,47 @@ const registry = createToolRegistry();
 
 ```typescript
 // libs/agent/core/src/lib/agent.service.ts
-import { Anthropic } from '@anthropic-ai/sdk';
+import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { createToolRegistry } from '@stock-analyzer/mcp/tools';
 
 export class AgentService {
-  private anthropic: Anthropic;
+  private mcpServer;
 
-  async analyzeStock(ticker: string) {
+  async onModuleInit() {
     const registry = createToolRegistry();
-    const tools = registry.getTools();
+    const mcpTools = registry.getTools();
 
-    const stream = await this.anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      tools: tools, // Direct tool integration
-      messages: [/* ... */],
-      stream: true,
+    // Convert MCP tools to SDK tools
+    const sdkTools = mcpTools.map((mcpTool) =>
+      tool(mcpTool.name, mcpTool.description, zodSchema, async (args) => {
+        return await registry.executeTool(mcpTool.name, args);
+      })
+    );
+
+    // Create SDK MCP server
+    this.mcpServer = createSdkMcpServer({
+      name: 'stock-analyzer-tools',
+      version: '1.0.0',
+      tools: sdkTools,
+    });
+  }
+
+  async analyzeStock(ticker: string, userPrompt: string, sessionId?: string) {
+    const stream = query({
+      prompt: userPrompt,
+      options: {
+        systemPrompt: STOCK_VALUATION_FRAMEWORK,
+        model: 'claude-sonnet-4-20250514',
+        maxTurns: 20,
+        maxThinkingTokens: 10000,
+        permissionMode: 'bypassPermissions',
+        mcpServers: {
+          'stock-analyzer': this.mcpServer,
+        },
+      },
     });
 
-    // Process stream...
+    // Process stream and emit events...
   }
 }
 ```
@@ -257,21 +280,44 @@ export FMP_API_KEY=your-api-key
 
 ## SSE Streaming Pattern
 
+The agent streams analysis in real-time via Server-Sent Events (SSE):
+
 ```typescript
 // Agent emits events during analysis
 this.eventEmitter.emit(`analysis.chunk.${sessionId}`, {
-  type: 'chunk',
-  content: data,
+  ticker,
+  type: 'text',
+  content: textContent,
+  phase: 'executive-summary',
+  timestamp: new Date().toISOString(),
+});
+
+this.eventEmitter.emit(`analysis.tool.${sessionId}`, {
+  ticker,
+  toolName: 'fetch_company_data',
+  toolId: 'toolu_xxx',
+  timestamp: new Date().toISOString(),
+});
+
+this.eventEmitter.emit(`analysis.complete.${sessionId}`, {
+  ticker,
+  executiveSummary: '...',
+  metadata: { analysisDate, framework, model, duration },
 });
 
 // SSE Controller forwards to client
 res.write(`data: ${JSON.stringify({
-  type: 'chunk',
-  content: data
+  type: 'chunk' | 'tool' | 'complete' | 'error',
+  ...eventData
 })}\n\n`);
-
-// Event types: 'start', 'chunk', 'tool_use', 'complete', 'error'
 ```
+
+**Event Flow:**
+1. `connected` - Stream established
+2. `chunk` - Text content from LLM (thinking + response)
+3. `tool` - Tool called (toolName, toolId)
+4. `complete` - Analysis finished (executiveSummary + metadata)
+5. `error` - Error occurred
 
 ## Environment Variables
 
@@ -308,6 +354,34 @@ FMP_API_KEY=...              # Required for FMP API access
   - Configurable tokens per second and bucket size
 
 Both are instantiated by `createToolRegistry()` and shared across tools.
+
+## Stock Valuation Framework v2.3
+
+Located in `libs/agent/core/src/lib/prompts/framework-v2.3.ts`:
+
+**Framework Philosophy:**
+- Systematic 6-phase approach for valuing growth companies transitioning from revenue multiples to earnings-based valuations
+- De-risks investment decisions by quantifying "multiple compression" risk
+- Comprehensive quality assessment across 6 dimensions (0-18 scale)
+
+**Critical Framework Instructions:**
+- **Single tool call**: Instructs LLM to call `fetch_company_data` ONLY ONCE per analysis
+- **Quarterly data**: Use `period="quarter"` and `limit=8` (last 2 years of quarterly data)
+- **Forbidden tools**: Explicitly forbids using non-financial tools (TodoWrite, Read, Write, Bash, etc.)
+- **Available tools**: Only `fetch_company_data`, `calculate_dcf`, `test_api_connection`
+
+**Six-Phase Analysis Process:**
+1. Setup & Preparation (20min)
+2. Data Collection & Verification (15min)
+3. Core Analysis (30min)
+4. Valuation Testing (20min)
+5. Quality & Risk Assessment (15min)
+6. Decision & Implementation (10min)
+
+**Three Critical Handoff Tests:**
+1. Implied P/E Analysis - Risk if >50x for scaled company
+2. Required Margin Analysis - Risk if exceeds best-in-class peers
+3. Scale Requirements - Express as multiple of current revenue
 
 ## Key Financial Data Types
 
@@ -386,8 +460,22 @@ npm run start:agent
 
 ### Streaming Analysis from Agent
 
-1. Agent calls `analyzeStock()` with ticker
-2. Anthropic SDK streams tool calls and responses
-3. Agent emits events via `EventEmitter` with session ID
-4. SSE controller listens for events and forwards to client
-5. Client receives real-time updates of analysis progress
+**Analysis Flow (Single-Query Approach):**
+1. Agent calls `analyzeStock(ticker, userPrompt, options, sessionId)`
+2. Executes single query with `phase: 'executive-summary'`
+3. Anthropic SDK streams with extended thinking (`maxThinkingTokens: 10000`)
+4. Agent processes stream messages:
+   - Text content → emits `analysis.chunk.${sessionId}`
+   - Tool use → emits `analysis.tool.${sessionId}` (toolName, toolId)
+   - Stream complete → emits `analysis.complete.${sessionId}`
+5. SSE controller listens for events and forwards to client as SSE
+6. Client receives real-time updates: connected → chunks → tool calls → complete
+
+**Key Optimizations:**
+- Single query (executive summary only) instead of two-phase analysis
+- Framework instructs LLM to call `fetch_company_data` ONLY ONCE with quarterly data (8 quarters)
+- Extended thinking enabled for deeper analysis without multiple turns
+- Tool event emission for real-time visibility into data fetching
+- `fullAnalysis` field is optional (empty by default)
+
+**Always kill servers after finishing debugging/testing/coding with a process**
