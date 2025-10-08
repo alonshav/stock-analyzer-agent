@@ -31,6 +31,7 @@ export class AgentService {
   private readonly logger = new Logger(AgentService.name);
   private readonly toolRegistry;
   private readonly mcpServer;
+  private currentSessionId: string | undefined;
 
   constructor(
     private config: ConfigService,
@@ -57,7 +58,28 @@ export class AgentService {
         mcpTool.description || '',
         zodSchema,
         async (args) => {
+          // Emit tool use event using current session ID
+          if (this.currentSessionId) {
+            this.eventEmitter.emit(`analysis.chunk.${this.currentSessionId}`, {
+              type: 'tool_use',
+              toolName: mcpTool.name,
+              toolInput: args,
+              timestamp: new Date().toISOString(),
+            });
+          }
+
           const result = await this.toolRegistry.executeTool(mcpTool.name, args);
+
+          // Emit tool result event
+          if (this.currentSessionId) {
+            this.eventEmitter.emit(`analysis.chunk.${this.currentSessionId}`, {
+              type: 'tool_result',
+              toolName: mcpTool.name,
+              result: typeof result === 'string' ? result.substring(0, 200) : JSON.stringify(result).substring(0, 200),
+              timestamp: new Date().toISOString(),
+            });
+          }
+
           return result;
         }
       );
@@ -188,6 +210,9 @@ export class AgentService {
   ): Promise<string> {
     let fullContent = '';
 
+    // Set current session ID for tool execution events
+    this.currentSessionId = sessionId;
+
     try {
       const stream = query({
         prompt,
@@ -203,6 +228,9 @@ export class AgentService {
       });
 
       for await (const message of stream) {
+        // Log message type for debugging
+        this.logger.debug(`Stream message type: ${message.type}`);
+
         // Handle assistant messages
         if (message.type === 'assistant') {
           // Extract text content from message.message.content
@@ -210,15 +238,20 @@ export class AgentService {
           let content = '';
 
           if (Array.isArray(apiMessage.content)) {
-            content = apiMessage.content
-              .map((block: any) => (block.type === 'text' ? block.text : ''))
-              .join('');
+            // Process each content block
+            for (const block of apiMessage.content) {
+              if (block.type === 'text') {
+                content += block.text;
+              }
+              // Note: tool_use blocks are handled by the tool execution wrapper
+            }
           }
 
           // Only emit streaming events during thought process (full-analysis phase)
           if (sessionId && phase === 'full-analysis' && content) {
             this.eventEmitter.emit(`analysis.chunk.${sessionId}`, {
               ticker,
+              type: 'text',
               content,
               phase,
               timestamp: new Date().toISOString(),
@@ -227,9 +260,6 @@ export class AgentService {
 
           fullContent += content;
         }
-
-        // Note: Tool use events are internal to the SDK
-        // We can't track them directly in this streaming model
       }
 
       return fullContent;
@@ -238,6 +268,9 @@ export class AgentService {
       const errorStack = error instanceof Error ? error.stack : undefined;
       this.logger.error(`Error in executeQuery: ${errorMessage}`, errorStack);
       throw error;
+    } finally {
+      // Clear current session ID
+      this.currentSessionId = undefined;
     }
   }
 }
