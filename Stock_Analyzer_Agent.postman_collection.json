@@ -1,0 +1,188 @@
+{
+  "info": {
+    "name": "Stock Analyzer Agent API",
+    "description": "REST API endpoints for the Stock Analyzer Agent service. Provides async stock analysis with status polling and report retrieval.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "stock-analyzer-agent-v1",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Analysis Workflow",
+      "item": [
+        {
+          "name": "1. Start Analysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ticker\": \"AAPL\",\n  \"prompt\": \"Provide a comprehensive analysis of Apple Inc., focusing on recent financial performance, competitive position, and valuation.\",\n  \"options\": {\n    \"focusAreas\": [\"financials\", \"valuation\", \"competitive_position\"]\n  }\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/analyze",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["api", "analyze"]
+            },
+            "description": "Initiates a new stock analysis. Returns an analysisId for tracking progress."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Check Analysis Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/api/analyze/status/{{analysisId}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["api", "analyze", "status", "{{analysisId}}"]
+            },
+            "description": "Check the status of an ongoing analysis. Replace {{analysisId}} with the ID from Start Analysis."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Analysis Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/api/analyze/report/{{analysisId}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["api", "analyze", "report", "{{analysisId}}"]
+            },
+            "description": "Retrieve the completed analysis report. Only available when status is 'complete'."
+          },
+          "response": []
+        }
+      ],
+      "description": "Complete workflow for async stock analysis: start → check status → get report"
+    },
+    {
+      "name": "Quick Analysis Examples",
+      "item": [
+        {
+          "name": "Analyze NVDA - AI Focus",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ticker\": \"NVDA\",\n  \"prompt\": \"Analyze NVIDIA's position in the AI chip market, focusing on revenue growth, margins, and competitive moats.\",\n  \"options\": {\n    \"focusAreas\": [\"ai_market\", \"financials\", \"competitive_advantage\"]\n  }\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/analyze",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["api", "analyze"]
+            },
+            "description": "Example: Analyze NVIDIA with focus on AI chip market"
+          },
+          "response": []
+        },
+        {
+          "name": "Analyze TSLA - Fundamentals",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ticker\": \"TSLA\",\n  \"prompt\": \"Provide a fundamental analysis of Tesla, focusing on profitability, cash flow, and valuation metrics.\",\n  \"options\": {\n    \"focusAreas\": [\"profitability\", \"cash_flow\", \"valuation\"]\n  }\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/analyze",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["api", "analyze"]
+            },
+            "description": "Example: Analyze Tesla with focus on fundamentals"
+          },
+          "response": []
+        },
+        {
+          "name": "Analyze MSFT - Cloud Business",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ticker\": \"MSFT\",\n  \"prompt\": \"Analyze Microsoft's cloud business (Azure) performance, revenue breakdown, and growth prospects compared to AWS and GCP.\",\n  \"options\": {\n    \"focusAreas\": [\"cloud_business\", \"revenue_segments\", \"competitive_position\"]\n  }\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/analyze",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["api", "analyze"]
+            },
+            "description": "Example: Analyze Microsoft with focus on cloud business"
+          },
+          "response": []
+        },
+        {
+          "name": "Analyze GOOGL - Simple",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ticker\": \"GOOGL\",\n  \"prompt\": \"Quick analysis of Alphabet Inc.\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/analyze",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["api", "analyze"]
+            },
+            "description": "Example: Simple analysis with minimal options"
+          },
+          "response": []
+        }
+      ],
+      "description": "Pre-configured examples for common analysis scenarios"
+    }
+  ],
+  "variable": [
+    {
+      "key": "analysisId",
+      "value": "",
+      "type": "string",
+      "description": "Set this after starting an analysis to use in status/report endpoints"
+    }
+  ]
+}
