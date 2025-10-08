@@ -6,6 +6,10 @@
   "main": "./src/index.js",
   "types": "./src/index.d.ts",
   "dependencies": {
-    "tslib": "^2.3.0"
+    "tslib": "^2.3.0",
+    "@stock-analyzer/mcp/integrations": "*",
+    "@stock-analyzer/shared/utils": "*",
+    "@stock-analyzer/shared/types": "*",
+    "@modelcontextprotocol/sdk": "*"
   }
 }

@@ -128,7 +128,7 @@ export class FMPAdapter {
     }
   }
 
-  async getIncomeStatements(ticker: string, limit: number = 5, period: 'annual' | 'quarter' = 'annual'): Promise<IncomeStatement[]> {
+  async getIncomeStatements(ticker: string, limit = 5, period: 'annual' | 'quarter' = 'annual'): Promise<IncomeStatement[]> {
     try {
       const response = await this.client.get(`/income-statement/${ticker.toUpperCase()}`, {
         params: { limit, period },
@@ -141,7 +141,7 @@ export class FMPAdapter {
     }
   }
 
-  async getBalanceSheets(ticker: string, limit: number = 5, period: 'annual' | 'quarter' = 'annual'): Promise<BalanceSheet[]> {
+  async getBalanceSheets(ticker: string, limit = 5, period: 'annual' | 'quarter' = 'annual'): Promise<BalanceSheet[]> {
     try {
       const response = await this.client.get(`/balance-sheet-statement/${ticker.toUpperCase()}`, {
         params: { limit, period },
@@ -154,7 +154,7 @@ export class FMPAdapter {
     }
   }
 
-  async getCashFlowStatements(ticker: string, limit: number = 5, period: 'annual' | 'quarter' = 'annual'): Promise<CashFlowStatement[]> {
+  async getCashFlowStatements(ticker: string, limit = 5, period: 'annual' | 'quarter' = 'annual'): Promise<CashFlowStatement[]> {
     try {
       const response = await this.client.get(`/cash-flow-statement/${ticker.toUpperCase()}`, {
         params: { limit, period },
@@ -167,7 +167,7 @@ export class FMPAdapter {
     }
   }
 
-  async getKeyMetrics(ticker: string, limit: number = 5, period: 'annual' | 'quarter' = 'annual'): Promise<KeyMetrics[]> {
+  async getKeyMetrics(ticker: string, limit = 5, period: 'annual' | 'quarter' = 'annual'): Promise<KeyMetrics[]> {
     try {
       const response = await this.client.get(`/key-metrics/${ticker.toUpperCase()}`, {
         params: { limit, period },
@@ -180,7 +180,7 @@ export class FMPAdapter {
     }
   }
 
-  async getFinancialRatios(ticker: string, limit: number = 5, period: 'annual' | 'quarter' = 'annual'): Promise<FinancialRatios[]> {
+  async getFinancialRatios(ticker: string, limit = 5, period: 'annual' | 'quarter' = 'annual'): Promise<FinancialRatios[]> {
     try {
       const response = await this.client.get(`/ratios/${ticker.toUpperCase()}`, {
         params: { limit, period },
@@ -191,6 +191,20 @@ export class FMPAdapter {
       console.error('Error fetching financial ratios:', error);
       throw error;
     }
+  }
+
+  async fetchAllFinancials(ticker: string, limit = 5, period: 'annual' | 'quarter' = 'annual') {
+    const [incomeStatements, balanceSheets, cashFlowStatements] = await Promise.all([
+      this.getIncomeStatements(ticker, limit, period),
+      this.getBalanceSheets(ticker, limit, period),
+      this.getCashFlowStatements(ticker, limit, period),
+    ]);
+
+    return {
+      incomeStatements,
+      balanceSheets,
+      cashFlowStatements,
+    };
   }
 
   async testConnection(): Promise<boolean> {

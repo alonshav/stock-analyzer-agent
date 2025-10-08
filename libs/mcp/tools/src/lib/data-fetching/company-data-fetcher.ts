@@ -83,7 +83,7 @@ export class CompanyDataFetcher {
             result.financials.cashFlowStatements = data;
             break;
           case 'financials':
-            result.financials = await this.fetchAllFinancials(ticker, { useCache, limit, period });
+            result.financials = data;
             break;
           case 'ratios':
             result.ratios = data;
@@ -153,6 +153,9 @@ export class CompanyDataFetcher {
       case 'key_metrics':
         data = await adapter.getKeyMetrics(ticker, limit, period);
         break;
+      case 'financials':
+        data = await adapter.fetchAllFinancials(ticker, limit, period);
+        break;
       default:
         throw new Error(`Unsupported data type: ${dataType}`);
     }
@@ -162,23 +165,6 @@ export class CompanyDataFetcher {
     }
 
     return data;
-  }
-
-  private async fetchAllFinancials(
-    ticker: string,
-    options: { useCache?: boolean; limit?: number; period?: 'annual' | 'quarter' }
-  ) {
-    const [incomeStatements, balanceSheets, cashFlowStatements] = await Promise.all([
-      this.fetchDataType(ticker, 'income_statement', options),
-      this.fetchDataType(ticker, 'balance_sheet', options),
-      this.fetchDataType(ticker, 'cash_flow', options),
-    ]);
-
-    return {
-      incomeStatements,
-      balanceSheets,
-      cashFlowStatements,
-    };
   }
 
   async validateTicker(ticker: string): Promise<boolean> {
