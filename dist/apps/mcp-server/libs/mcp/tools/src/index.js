@@ -18,9 +18,11 @@ module.exports = __toCommonJS(src_exports);
 __reExport(src_exports, require("./lib/tool-registry"), module.exports);
 __reExport(src_exports, require("./lib/dcf/dcf-calculator"), module.exports);
 __reExport(src_exports, require("./lib/data-fetching/company-data-fetcher"), module.exports);
+__reExport(src_exports, require("./lib/pdf/generate-pdf-tool"), module.exports);
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ...require("./lib/tool-registry"),
   ...require("./lib/dcf/dcf-calculator"),
-  ...require("./lib/data-fetching/company-data-fetcher")
+  ...require("./lib/data-fetching/company-data-fetcher"),
+  ...require("./lib/pdf/generate-pdf-tool")
 });

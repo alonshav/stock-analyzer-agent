@@ -193,6 +193,18 @@ class FMPAdapter {
       throw error;
     }
   }
+  async fetchAllFinancials(ticker, limit = 5, period = "annual") {
+    const [incomeStatements, balanceSheets, cashFlowStatements] = await Promise.all([
+      this.getIncomeStatements(ticker, limit, period),
+      this.getBalanceSheets(ticker, limit, period),
+      this.getCashFlowStatements(ticker, limit, period)
+    ]);
+    return {
+      incomeStatements,
+      balanceSheets,
+      cashFlowStatements
+    };
+  }
   async testConnection() {
     try {
       const response = await this.client.get("/stock-list");

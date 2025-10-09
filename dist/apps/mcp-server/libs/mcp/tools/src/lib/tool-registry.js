@@ -26,6 +26,7 @@ module.exports = __toCommonJS(tool_registry_exports);
 var import_company_data_fetcher = require("./data-fetching/company-data-fetcher");
 var import_dcf_calculator = require("./dcf/dcf-calculator");
 var import_utils = require("@stock-analyzer/shared/utils");
+var import_generate_pdf_tool = require("./pdf/generate-pdf-tool");
 class ToolRegistry {
   constructor(cacheManager, rateLimiter) {
     this.cacheManager = cacheManager;
@@ -138,7 +139,8 @@ class ToolRegistry {
           type: "object",
           properties: {}
         }
-      }
+      },
+      import_generate_pdf_tool.generatePDFTool
     ];
   }
   /**
@@ -152,6 +154,8 @@ class ToolRegistry {
         return await this.handleCalculateDCF(args);
       case "test_api_connection":
         return await this.handleTestApiConnection();
+      case "generate_pdf":
+        return await (0, import_generate_pdf_tool.handleGeneratePDF)(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }

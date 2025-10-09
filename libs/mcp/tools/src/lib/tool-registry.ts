@@ -2,6 +2,7 @@ import {Tool} from '@modelcontextprotocol/sdk/types.js';
 import {CompanyDataFetcher} from './data-fetching/company-data-fetcher';
 import {DCFCalculator} from './dcf/dcf-calculator';
 import {CacheManager, RateLimiter} from '@stock-analyzer/shared/utils';
+import {generatePDFTool, handleGeneratePDF} from './pdf/generate-pdf-tool';
 
 /**
  * Tool Registry for MCP Tools
@@ -129,6 +130,7 @@ export class ToolRegistry {
           properties: {},
         },
       },
+      generatePDFTool,
     ];
   }
 
@@ -143,6 +145,8 @@ export class ToolRegistry {
         return await this.handleCalculateDCF(args);
       case 'test_api_connection':
         return await this.handleTestApiConnection();
+      case 'generate_pdf':
+        return await handleGeneratePDF(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
