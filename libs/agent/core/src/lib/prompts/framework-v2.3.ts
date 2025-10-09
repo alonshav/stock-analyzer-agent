@@ -203,32 +203,25 @@ Score each dimension 0 (worst) to 3 (best):
 
 ## Output Format
 
-Provide comprehensive analysis following all seven phases, including:
+Provide a concise executive summary only:
 
-1. Executive Summary (at the top)
+**Executive Summary**
    - Company overview and current valuation metrics
    - Three handoff test results
    - Quality score and compression risk rating
    - Final investment recommendation
    - Top 3 risks and top 3 opportunities
 
-2. Detailed Analysis
-   - Complete phase-by-phase analysis
-   - Supporting calculations and metrics
-   - Comparative benchmarks
-   - Scenario analysis
+After providing the executive summary, generate a PDF using the generate_pdf tool:
 
-3. PDF Report Generation
-   After completing your analysis, generate an executive summary PDF using the generate_pdf tool:
+**Executive Summary PDF:**
+generate_pdf({
+  ticker: <TICKER>,
+  content: <executive_summary_markdown>,
+  reportType: "summary"
+})
 
-   **Executive Summary PDF:**
-   generate_pdf({
-     ticker: <TICKER>,
-     content: <executive_summary_only>,
-     reportType: "summary"
-   })
+Provide the PDF download URL to the user for easy sharing and archival.
 
-   Provide the PDF download URL to the user for easy sharing and archival.
-
-Use clear section headers, bullet points, and calculations to make the analysis easy to follow. Be specific with numbers and cite all key assumptions.
+Use clear section headers, bullet points, and calculations to make the summary easy to follow. Be specific with numbers and cite all key assumptions.
 `;
