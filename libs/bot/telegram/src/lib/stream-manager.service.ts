@@ -237,11 +237,10 @@ export class StreamManagerService {
                 ctx.chat!.id,
                 currentMessageId,
                 undefined,
-                completeText,
-                { parse_mode: 'Markdown' }
+                completeText
               );
             } catch {
-              await ctx.reply(completeText, { parse_mode: 'Markdown' });
+              await ctx.reply(completeText);
             }
 
             // Send completion message
@@ -249,8 +248,7 @@ export class StreamManagerService {
               `✅ Analysis complete for ${ticker}!\n\n` +
               `⏱️ Duration: ${duration}s\n` +
               `🤖 Model: ${data.metadata.model}\n` +
-              `📊 Framework: ${data.metadata.framework}`,
-              { parse_mode: 'Markdown' }
+              `📊 Framework: ${data.metadata.framework}`
             );
 
             this.cleanup(chatId);
@@ -326,7 +324,7 @@ export class StreamManagerService {
     }
 
     return (
-      `✅ *Analysis Complete: ${ticker}*\n\n` +
+      `✅ Analysis Complete: ${ticker}\n\n` +
       `${formattedSummary}\n\n` +
       `⏱️ Duration: ${duration}s | 🤖 ${model}`
     );
