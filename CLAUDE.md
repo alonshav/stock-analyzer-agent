@@ -47,6 +47,9 @@ Stock Analyzer is an Nx monorepo for AI-powered financial analysis with three ap
 7. **Extended thinking enabled** - uses `maxThinkingTokens: 10000` for deeper analysis
 8. **External PDF generation** - via Anvil API (no Puppeteer)
 9. **Tool response optimization** - Data fetch limited to stay under Claude's 25K token tool response limit
+10. **Session management** - 1-hour conversational memory enables follow-up questions
+11. **Hooks system** - Middleware-style interception for validation, budget control, and data filtering
+12. **Two operating modes** - Workflow (new analysis) and Conversation (follow-ups with context)
 
 ## Repository Structure
 
@@ -65,7 +68,9 @@ libs/                        # All business logic
   │   └── integrations/    # External API adapters (FMPAdapter)
   ├── agent/
   │   ├── core/           # AgentService, StreamService
-  │   └── api/            # REST + SSE controllers
+  │   ├── api/            # REST + SSE controllers
+  │   ├── session/        # SessionManagerService (1-hour memory)
+  │   └── hooks/          # HooksService (validation, budget, filtering)
   ├── bot/
   │   ├── telegram/       # Telegram bot implementation
   │   └── common/         # Shared bot utilities
@@ -148,12 +153,14 @@ shared/types → shared/utils → shared/config
    mcp/integrations (FMPAdapter)
        ↓
    mcp/tools (ToolRegistry, DCFCalculator, CompanyDataFetcher)
-       ↓              ↓
-   mcp/server    agent/core (AgentService imports tools directly)
-       ↓              ↓
-   mcp-server     agent/api (REST + SSE controllers)
+       ↓              ↓                    ↓
+   mcp/server    agent/session       agent/hooks
+       ↓              ↓                    ↓
+   mcp-server    agent/core (AgentService imports all three)
      (app)            ↓
-                 bot/telegram
+                 agent/api (REST + SSE controllers)
+                      ↓
+                 bot/telegram (StreamManagerService, TelegramBotService)
                       ↓
                 telegram-bot (app)
 ```
@@ -167,6 +174,8 @@ All libraries are accessible via `@stock-analyzer/` namespace:
 - `@stock-analyzer/mcp/integrations` - FMP API adapter
 - `@stock-analyzer/agent/core` - Agent service logic
 - `@stock-analyzer/agent/api` - REST/SSE controllers
+- `@stock-analyzer/agent/session` - Session management (NEW - 1-hour conversational memory)
+- `@stock-analyzer/agent/hooks` - Hooks system (NEW - validation, budget, filtering)
 - `@stock-analyzer/bot/telegram` - Telegram bot implementation
 - `@stock-analyzer/bot/common` - Shared bot utilities
 - `@stock-analyzer/shared/types` - Financial data types
@@ -243,6 +252,76 @@ export class AgentService {
   }
 }
 ```
+
+## Session Management & Conversation Mode
+
+The system maintains 1-hour conversational sessions enabling follow-up questions:
+
+**Session Lifecycle** (`libs/agent/session/src/lib/session-manager.service.ts`):
+```typescript
+// Sessions automatically created on analysis start
+const session = sessionManager.createSession(chatId, ticker);
+// Session: { sessionId, ticker, chatId, status: 'active', expiresAt: now + 1hr }
+
+// Conversation history tracked for context
+sessionManager.addMessage(chatId, 'user', 'What is the P/E ratio?');
+sessionManager.addMessage(chatId, 'assistant', 'AAPL has P/E of 28.5...');
+
+// Context building for follow-up questions
+const contextPrompt = sessionManager.buildContextPrompt(chatId, newMessage);
+// Includes: ticker, recent analysis summary, conversation history, current question
+
+// Automatic cleanup every 5 minutes removes expired sessions
+```
+
+**Two Operating Modes**:
+
+1. **Workflow Mode** - `analyzeStock(chatId, ticker, prompt)`:
+   - Creates new session
+   - Runs full analysis (30-60s)
+   - Streams executive summary
+   - Session remains active for follow-ups
+
+2. **Conversation Mode** - `handleConversation(chatId, message)`:
+   - Loads active session
+   - Builds context from past analysis + conversation
+   - Calls Claude with full context (5-15s)
+   - Streams targeted answer
+   - Adds Q&A to conversation history
+
+**Backward Compatibility**: Legacy `analyzeStock(ticker, prompt)` signature still works via overload detection.
+
+## Hooks System (Middleware Pattern)
+
+Three hook types intercept the analysis lifecycle (`libs/agent/hooks/src/lib/hooks.service.ts`):
+
+**1. OnMessageHook** - Fires for every SDK message:
+```typescript
+const hook = hooksService.createOnMessageHook(sessionId, chatId);
+// Tracks: token usage, message types, progress events
+// Use case: Monitoring and metrics
+```
+
+**2. OnToolUseHook** - Fires BEFORE tool execution:
+```typescript
+const hook = hooksService.createOnToolUseHook(sessionId, chatId);
+// Validates: required parameters, budget limits
+// Injects: session context, ticker context
+// Use case: Budget control, input validation
+```
+
+**3. OnToolResultHook** - Fires AFTER tool execution:
+```typescript
+const hook = hooksService.createOnToolResultHook(sessionId, chatId);
+// Filters: sensitive data (apiKey, password, token)
+// Enhances: error messages with session context
+// Caches: tool results for reuse
+// Use case: Security, error handling, optimization
+```
+
+**SDK Integration** - Hooks connect via Anthropic SDK's PreToolUse/PostToolUse events in `agent.service.ts:executeQuery()`.
+
+**Error Resilience** - Hook failures are logged but don't block analysis (graceful degradation).
 
 ## MCP Server Standalone Usage
 
@@ -515,24 +594,48 @@ npm run start:agent
 
 ## Telegram Bot Integration
 
-The Telegram bot (`libs/bot/telegram/src/lib/stream-manager.service.ts`) connects to the Agent's SSE endpoint and handles real-time event streaming:
+**Smart Routing** (`libs/bot/telegram/src/lib/telegram-bot.service.ts`):
 
-**Event Handling:**
-- `thinking` → Sends typing action (`ctx.sendChatAction('typing')`)
-- `chunk` → Updates message with streaming analysis text (throttled: 1s or 10 chunks)
-- `tool` → Shows tool usage notification in buffer
-- `pdf` → Decodes base64, sends as document via `ctx.telegram.sendDocument()`
-- `complete` → Displays final summary and completion metadata
+The bot intelligently routes user input based on context:
+```typescript
+// Command handling
+/analyze TICKER → handleAnalyzeCommand()
+/status         → handleStatusCommand()  (NEW - shows session info)
+/stop           → handleStopCommand()
+/help           → handleHelpCommand()
+
+// Smart text routing
+"AAPL"                    → Start new analysis (if no active session)
+"AAPL" (session active)   → Conflict detection: "Start new or continue?"
+"What's the P/E ratio?"   → Route to conversation mode (if session active)
+"What's the P/E ratio?"   → Error: "No active session" (if no session)
+```
+
+**Event Streaming** (`libs/bot/telegram/src/lib/stream-manager.service.ts`):
+
+Connects to Agent's SSE endpoint and handles real-time events:
+- `connected` → Establish stream
+- `thinking` → Send typing action (`ctx.sendChatAction('typing')`)
+- `chunk` → Update message with streaming text (throttled: 1s or 10 chunks)
+- `tool` → Show tool usage notification
+- `pdf` → Decode base64, send as document via `ctx.telegram.sendDocument()`
+- `complete` → Display final summary + prompt for follow-up questions
+
+**Session Tracking**:
+- `startStream()` → Tracks session for analysis
+- `startConversation()` → Handles follow-up questions
+- `hasActiveSession()` → Checks if user has active session
+- `getSessionStatus()` → Returns session info for `/status` command
 
 **Critical Implementation Details:**
-- **No Markdown parse mode** - Messages sent as plain text to avoid parsing errors with tool names containing underscores
+- **No Markdown parse mode** - Messages sent as plain text to avoid parsing errors
 - **Message throttling** - Updates every 1 second OR every 10 chunks to avoid rate limits
 - **Buffer management** - Maintains stream buffer per chat ID, truncates at 3500 chars
 - **Error handling** - Gracefully handles edit failures, creates new messages if needed
 - **PDF transmission** - Converts base64 → Buffer → Telegram document with caption
-- **Cleanup** - Closes EventSource and clears buffers on stream completion/error
+- **Cleanup** - Closes EventSource and clears buffers on completion/error
 
-**Telegram Bot Environment:**
+**Environment:**
 ```bash
 TELEGRAM_BOT_TOKEN=...              # Bot token from @BotFather
 AGENT_SERVICE_URL=http://localhost:3001  # Agent API endpoint
