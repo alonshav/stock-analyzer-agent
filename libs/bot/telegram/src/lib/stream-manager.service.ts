@@ -23,6 +23,20 @@ interface StreamConfig {
   agentUrl: string;
 }
 
+interface ConversationConfig {
+  chatId: string;
+  message: string;
+  ctx: Context;
+  messageId: number;
+  agentUrl: string;
+}
+
+interface SessionInfo {
+  ticker: string;
+  status: string;
+  startedAt: string;
+}
+
 interface ChunkEvent {
   type: 'chunk';
   ticker: string;
@@ -99,6 +113,7 @@ export class StreamManagerService {
   private streamBuffers = new Map<string, string>();
   private streamStartTimes = new Map<string, number>();
   private lastInterventionTimes = new Map<string, number>();
+  private activeSessions = new Map<string, SessionInfo>();
 
   async startStream(config: StreamConfig): Promise<void> {
     const { chatId, ticker, ctx, messageId, agentUrl } = config;
@@ -117,6 +132,13 @@ export class StreamManagerService {
     this.streamBuffers.set(chatId, '');
     this.streamStartTimes.set(chatId, Date.now());
     this.lastInterventionTimes.set(chatId, Date.now());
+
+    // Track session
+    this.activeSessions.set(chatId, {
+      ticker,
+      status: 'analyzing',
+      startedAt: new Date().toISOString(),
+    });
 
     let currentMessageId = messageId;
     let lastUpdateTime = Date.now();
@@ -296,13 +318,20 @@ export class StreamManagerService {
 
             const duration = Math.round(data.metadata.duration / 1000);
 
+            // Mark session as complete but don't remove it (allow conversations)
+            const session = this.activeSessions.get(chatId);
+            if (session) {
+              session.status = 'completed';
+            }
+
             // Only send completion metadata if we have content
             if (hasReceivedContent) {
               await ctx.reply(
                 `✅ Analysis complete!\n\n` +
                 `⏱️ Duration: ${duration}s\n` +
                 `🤖 Model: ${data.metadata.model}\n` +
-                `📊 Framework: ${data.metadata.framework}`
+                `📊 Framework: ${data.metadata.framework}\n\n` +
+                `💬 You can now ask follow-up questions!`
               );
             }
 
@@ -360,6 +389,125 @@ export class StreamManagerService {
     this.streamBuffers.delete(chatId);
     this.streamStartTimes.delete(chatId);
     this.lastInterventionTimes.delete(chatId);
+    // Note: Don't delete session - keep it for conversation mode
+  }
+
+  /**
+   * Start conversation mode - send follow-up question to active session
+   */
+  async startConversation(config: ConversationConfig): Promise<void> {
+    const { chatId, message, ctx, messageId, agentUrl } = config;
+
+    // Connect to Agent's conversation endpoint
+    const conversationUrl = `${agentUrl}/api/conversation/${chatId}/stream`;
+    const params = new URLSearchParams({
+      message,
+      userId: ctx.from?.id.toString() || 'anonymous',
+      platform: 'telegram',
+    });
+
+    const eventSource = new EventSource(`${conversationUrl}?${params}`);
+    this.activeStreams.set(chatId, eventSource);
+    this.streamBuffers.set(chatId, '');
+    this.lastInterventionTimes.set(chatId, Date.now());
+
+    let currentMessageId = messageId;
+    let lastUpdateTime = Date.now();
+    let updateCounter = 0;
+
+    eventSource.onmessage = async (event: MessageEvent) => {
+      try {
+        const data: StreamEvent = JSON.parse(event.data);
+        this.lastInterventionTimes.set(chatId, Date.now());
+
+        switch (data.type) {
+          case StreamEventType.CHUNK:
+            // Append response to buffer
+            const buffer = this.streamBuffers.get(chatId) || '';
+            const updatedBuffer = buffer + data.content;
+            this.streamBuffers.set(chatId, updatedBuffer);
+            updateCounter++;
+
+            const shouldUpdate =
+              Date.now() - lastUpdateTime > TimeConstants.STREAM_UPDATE_INTERVAL ||
+              updateCounter >= TimeConstants.STREAM_CHUNK_THRESHOLD;
+
+            if (shouldUpdate) {
+              updateCounter = 0;
+              lastUpdateTime = Date.now();
+
+              try {
+                if (updatedBuffer.length <= TelegramLimits.SAFE_MESSAGE_LENGTH) {
+                  await ctx.telegram.editMessageText(
+                    ctx.chat!.id,
+                    currentMessageId,
+                    undefined,
+                    updatedBuffer
+                  );
+                } else {
+                  const newMsg = await ctx.reply(updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                  currentMessageId = newMsg.message_id;
+                  this.streamBuffers.set(chatId, updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                }
+              } catch (error) {
+                // Handle edit failures
+                const err = error as Error;
+                if (!err.message?.includes('message is not modified') && !err.message?.includes('too many requests')) {
+                  try {
+                    const newMsg = await ctx.reply(updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                    currentMessageId = newMsg.message_id;
+                  } catch {
+                    // Ignore
+                  }
+                }
+              }
+            }
+            break;
+
+          case StreamEventType.THINKING:
+            try {
+              await ctx.sendChatAction('typing');
+            } catch {
+              // Ignore
+            }
+            break;
+
+          case StreamEventType.COMPLETE:
+            await ctx.reply('✅ Response complete!');
+            this.cleanup(chatId);
+            break;
+
+          case StreamEventType.ERROR:
+            await ctx.reply(`❌ Error: ${data.message}`);
+            this.cleanup(chatId);
+            break;
+        }
+      } catch (error) {
+        this.logger.error('Conversation stream processing error:', error);
+      }
+    };
+
+    eventSource.onerror = async (error: any) => {
+      this.logger.error('Conversation SSE error:', error);
+      if (eventSource.readyState === EventSource.CLOSED) {
+        await ctx.reply('❌ Connection lost.');
+        this.cleanup(chatId);
+      }
+    };
+  }
+
+  /**
+   * Check if there's an active session (even if stream is closed)
+   */
+  hasActiveSession(chatId: string): boolean {
+    return this.activeSessions.has(chatId);
+  }
+
+  /**
+   * Get session status information
+   */
+  getSessionStatus(chatId: string): SessionInfo | null {
+    return this.activeSessions.get(chatId) || null;
   }
 
   private formatToolCall(data: ToolEvent): string {

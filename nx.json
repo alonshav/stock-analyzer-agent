@@ -27,7 +27,8 @@
           "buildDepsName": "build-deps",
           "watchDepsName": "watch-deps"
         }
-      }
+      },
+      "exclude": ["libs/agent/session/*", "libs/agent/hooks/*"]
     },
     {
       "plugin": "@nx/webpack/plugin",
@@ -50,6 +51,15 @@
       "plugin": "@nx/jest/plugin",
       "options": {
         "targetName": "test"
+      }
+    },
+    {
+      "plugin": "@nx/js/typescript",
+      "include": ["libs/agent/session/*", "libs/agent/hooks/*"],
+      "options": {
+        "typecheck": {
+          "targetName": "typecheck"
+        }
       }
     }
   ],

@@ -51,16 +51,19 @@ export class TelegramBotService implements OnModuleInit {
     this.bot.command('start', this.handleStartCommand.bind(this));
     this.bot.command('analyze', this.handleAnalyzeCommand.bind(this));
     this.bot.command('stop', this.handleStopCommand.bind(this));
+    this.bot.command('status', this.handleStatusCommand.bind(this));
     this.bot.command('help', this.handleHelpCommand.bind(this));
 
-    // Message handlers
+    // Message handlers - route to conversation or analysis
     this.bot.on('text', this.handleTextMessage.bind(this));
 
     // Error handling
     this.bot.catch((err: unknown, ctx) => {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       this.logger.error(`Bot error: ${errorMessage}`);
-      ctx.reply('An error occurred. Please try again.').catch(() => {});
+      ctx.reply('An error occurred. Please try again.').catch(() => {
+        // Ignore reply failures
+      });
     });
   }
 
@@ -112,39 +115,126 @@ export class TelegramBotService implements OnModuleInit {
 
   private async handleTextMessage(ctx: Context) {
     const text = (ctx.message as any)?.text || '';
+    const chatId = ctx.chat?.id.toString();
+
+    if (!chatId) return;
+
+    // Check if there's an active session
+    const hasActiveSession = this.streamManager.hasActiveSession(chatId);
 
     // Check if it's a ticker symbol (1-5 uppercase letters)
     if (/^[A-Z]{1,5}$/.test(text)) {
+      if (hasActiveSession) {
+        // Ask for confirmation before starting new analysis
+        await ctx.reply(
+          `You have an active analysis session. Reply with:
+• "yes" to start analyzing ${text}
+• Or ask a question about the current analysis`
+        );
+        return;
+      }
+
       // Treat as analyze command
       (ctx.message as any).text = `/analyze ${text}`;
       await this.handleAnalyzeCommand(ctx);
+    } else if (hasActiveSession) {
+      // Route to conversation mode
+      await this.handleConversation(ctx, text);
     } else {
-      await ctx.reply('Send a ticker symbol or use /analyze TICKER');
+      await ctx.reply(
+        'No active analysis session.\n\n' +
+        'Send a ticker symbol (e.g., AAPL) or use /analyze TICKER to start.'
+      );
     }
+  }
+
+  /**
+   * Handle follow-up questions in conversation mode
+   */
+  private async handleConversation(ctx: Context, message: string) {
+    const chatId = ctx.chat?.id.toString();
+
+    if (!chatId) return;
+
+    try {
+      await ctx.sendChatAction('typing');
+
+      const initialMsg = await ctx.reply('💭 Thinking...');
+
+      // Stream conversation response from Agent
+      await this.streamManager.startConversation({
+        chatId,
+        message,
+        ctx,
+        messageId: initialMsg.message_id,
+        agentUrl: this.agentUrl,
+      });
+    } catch (error) {
+      this.logger.error('Failed to handle conversation:', error);
+      await ctx.reply('Failed to process your question. Please try again.');
+    }
+  }
+
+  /**
+   * Show session status
+   */
+  private async handleStatusCommand(ctx: Context) {
+    const chatId = ctx.chat?.id.toString();
+
+    if (!chatId) return;
+
+    const sessionInfo = this.streamManager.getSessionStatus(chatId);
+
+    if (!sessionInfo) {
+      await ctx.reply('No active analysis session.');
+      return;
+    }
+
+    await ctx.reply(
+      `📊 Session Status\n\n` +
+      `Stock: ${sessionInfo.ticker}\n` +
+      `Status: ${sessionInfo.status}\n` +
+      `Started: ${sessionInfo.startedAt}\n\n` +
+      `💬 You can ask follow-up questions about this analysis.`
+    );
   }
 
   private async handleStartCommand(ctx: Context) {
     await ctx.reply(
       '👋 Welcome to Stock Analyzer Bot!\n\n' +
-        'This bot connects to our Agent service which uses financial analysis tools ' +
+        'This bot uses an AI agent with financial analysis tools ' +
         'to perform comprehensive stock analysis.\n\n' +
         '📋 Commands:\n' +
-        '/analyze TICKER - Analyze a stock\n' +
+        '/analyze TICKER - Start new analysis\n' +
+        '/status - Check active session\n' +
         '/stop - Stop current analysis\n' +
-        '/help - Show help\n\n' +
-        '💡 Or just send a ticker symbol like AAPL'
+        '/help - Show detailed help\n\n' +
+        '💡 Tips:\n' +
+        '• Just send a ticker symbol (e.g., AAPL)\n' +
+        '• Ask follow-up questions during active sessions\n' +
+        '• Sessions auto-expire after 1 hour'
     );
   }
 
   private async handleHelpCommand(ctx: Context) {
     await ctx.reply(
       '📖 How to use:\n\n' +
-        '• Send /analyze AAPL to analyze Apple\n' +
-        '• Or just send AAPL directly\n' +
-        '• Use /stop to cancel an analysis\n\n' +
-        '⚡ The analysis streams in real-time from our Agent service.\n' +
-        "📊 You'll see tool usage and thinking process as it happens.\n" +
-        '✅ Final executive summary will be delivered when complete.'
+        '🔍 Start Analysis:\n' +
+        '• /analyze AAPL - Analyze Apple Inc.\n' +
+        '• Or just send: AAPL\n\n' +
+        '💬 Conversation Mode:\n' +
+        '• Once analysis starts, ask questions:\n' +
+        '  "What is the P/E ratio?"\n' +
+        '  "How does it compare to peers?"\n' +
+        '  "What are the risks?"\n\n' +
+        '⚙️ Controls:\n' +
+        '• /status - View active session\n' +
+        '• /stop - Cancel analysis\n\n' +
+        '⚡ Real-time streaming shows:\n' +
+        '• Tool usage (data fetching, calculations)\n' +
+        '• Thinking process\n' +
+        '• Progressive analysis updates\n\n' +
+        '📊 Sessions expire after 1 hour of inactivity.'
     );
   }
 
