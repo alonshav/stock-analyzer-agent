@@ -4,16 +4,5 @@
   "sourceRoot": "libs/agent/core/src",
   "projectType": "library",
   "tags": ["type:library", "scope:agent"],
-  "targets": {
-    "build": {
-      "executor": "@nx/js:tsc",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "outputPath": "dist/libs/agent/core",
-        "main": "libs/agent/core/src/index.ts",
-        "tsConfig": "libs/agent/core/tsconfig.lib.json",
-        "assets": ["libs/agent/core/*.md"]
-      }
-    }
-  }
+  "targets": {}
 }
