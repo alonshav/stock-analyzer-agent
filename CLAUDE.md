@@ -46,6 +46,7 @@ Stock Analyzer is an Nx monorepo for AI-powered financial analysis with three ap
 6. **Single-query approach** - generates executive summary directly (optimized for speed)
 7. **Extended thinking enabled** - uses `maxThinkingTokens: 10000` for deeper analysis
 8. **External PDF generation** - via Anvil API (no Puppeteer)
+9. **Tool response optimization** - Data fetch limited to stay under Claude's 25K token tool response limit
 
 ## Repository Structure
 

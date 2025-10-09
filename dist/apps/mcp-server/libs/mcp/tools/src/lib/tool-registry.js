@@ -41,44 +41,26 @@ class ToolRegistry {
     return [
       {
         name: "fetch_company_data",
-        description: "Fetch comprehensive financial data for a company from Financial Modeling Prep API",
+        description: `Fetch essential financial data for a company in a single comprehensive call.
+
+CRITICAL: Call this tool ONLY ONCE per analysis. It returns everything you need:
+- Company profile (sector, industry, market cap, description)
+- Current stock quote (price, volume, day change)
+- Last 4 quarters of income statements (revenue, earnings, margins)
+- Last 4 quarters of balance sheets (assets, liabilities, equity)
+- Last 4 quarters of cash flow statements (operating, investing, financing)
+
+This single call provides sufficient data for complete analysis. The data is optimized
+to stay within Claude's 25K token tool response limit while providing comprehensive
+financial coverage (1 year of quarterly data).
+
+DO NOT make multiple calls - all essential data is included in one response.`,
         inputSchema: {
           type: "object",
           properties: {
             ticker: {
               type: "string",
-              description: "Stock ticker symbol (e.g., AAPL, GOOGL)"
-            },
-            dataTypes: {
-              type: "array",
-              items: {
-                type: "string",
-                enum: [
-                  "profile",
-                  "financials",
-                  "income_statement",
-                  "balance_sheet",
-                  "cash_flow",
-                  "ratios",
-                  "key_metrics",
-                  "quote"
-                ]
-              },
-              description: "Types of data to fetch",
-              default: ["profile", "quote"]
-            },
-            period: {
-              type: "string",
-              enum: ["annual", "quarter"],
-              description: "Period type: annual for yearly data, quarter for quarterly data",
-              default: "quarter"
-            },
-            limit: {
-              type: "number",
-              minimum: 1,
-              maximum: 20,
-              description: "Number of periods to fetch (1-20)",
-              default: 5
+              description: "Stock ticker symbol (e.g., AAPL, GOOGL). This is the ONLY parameter needed."
             }
           },
           required: ["ticker"]
@@ -161,11 +143,22 @@ class ToolRegistry {
     }
   }
   async handleFetchCompanyData(args) {
-    const { ticker, dataTypes, period = "quarter", limit = 5 } = args;
+    const { ticker } = args;
     if (!ticker) {
       throw new Error("Ticker symbol is required");
     }
-    const options = { period, limit };
+    const dataTypes = [
+      "profile",
+      "quote",
+      "income_statement",
+      "balance_sheet",
+      "cash_flow"
+    ];
+    const options = {
+      period: "quarter",
+      limit: 4
+      // 4 quarters = 1 year, optimized for token limits
+    };
     const data = await this.companyDataFetcher.fetchData(ticker, dataTypes, options);
     return {
       content: [
