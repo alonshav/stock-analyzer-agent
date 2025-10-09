@@ -26,11 +26,27 @@ interface ToolEvent {
   timestamp: string;
 }
 
+interface ThinkingEvent {
+  type: 'thinking';
+  ticker: string;
+  message: string;
+  timestamp: string;
+}
+
+interface PDFEvent {
+  type: 'pdf';
+  ticker: string;
+  pdfBase64: string;
+  fileSize: number;
+  reportType: 'full' | 'summary';
+  timestamp: string;
+}
+
 interface CompleteEvent {
   type: 'complete';
   ticker: string;
   fullAnalysis?: string;
-  executiveSummary: string;
+  executiveSummary?: string;
   metadata: {
     analysisDate: string;
     framework: string;
@@ -51,7 +67,7 @@ interface ConnectedEvent {
   ticker: string;
 }
 
-type StreamEvent = ChunkEvent | ToolEvent | CompleteEvent | ErrorEvent | ConnectedEvent;
+type StreamEvent = ChunkEvent | ToolEvent | ThinkingEvent | PDFEvent | CompleteEvent | ErrorEvent | ConnectedEvent;
 
 @Injectable()
 export class StreamManagerService {
@@ -156,6 +172,44 @@ export class StreamManagerService {
               );
             } catch {
               // Ignore edit failures for tool messages
+            }
+            break;
+
+          case 'thinking':
+            // Show thinking indicator
+            this.logger.log(`Agent is thinking for ${ticker}`);
+            try {
+              await ctx.sendChatAction('typing');
+            } catch {
+              // Ignore if typing action fails
+            }
+            break;
+
+          case 'pdf':
+            // Receive PDF and send as document
+            this.logger.log(`Received PDF for ${ticker}: ${data.fileSize} bytes, type: ${data.reportType}`);
+            try {
+              // Decode base64 to buffer
+              const pdfBuffer = Buffer.from(data.pdfBase64, 'base64');
+
+              // Send as document
+              const filename = `${ticker}_${data.reportType}_analysis.pdf`;
+              await ctx.telegram.sendDocument(
+                ctx.chat!.id,
+                {
+                  source: pdfBuffer,
+                  filename: filename,
+                },
+                {
+                  caption: `📄 ${ticker} ${data.reportType === 'full' ? 'Full Analysis' : 'Executive Summary'} Report\n` +
+                           `File size: ${Math.round(data.fileSize / 1024)}KB`,
+                }
+              );
+
+              this.logger.log(`PDF sent successfully for ${ticker}`);
+            } catch (error) {
+              this.logger.error(`Failed to send PDF for ${ticker}:`, error);
+              await ctx.reply(`⚠️ PDF generated but failed to send. Size: ${Math.round(data.fileSize / 1024)}KB`);
             }
             break;
 

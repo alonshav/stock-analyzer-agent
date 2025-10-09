@@ -75,6 +75,14 @@ export class SSEController {
         res.write(`data: ${JSON.stringify(thinkingResponse)}\n\n`);
       };
 
+      const pdfListener = (data: any) => {
+        const pdfResponse: StreamResponse = {
+          type: 'pdf',
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(pdfResponse)}\n\n`);
+      };
+
       const completeListener = (data: any) => {
         const completeResponse: StreamResponse = {
           type: 'complete',
@@ -100,6 +108,7 @@ export class SSEController {
       this.eventEmitter.on(`analysis.chunk.${streamId}`, chunkListener);
       this.eventEmitter.on(`analysis.tool.${streamId}`, toolListener);
       this.eventEmitter.on(`analysis.thinking.${streamId}`, thinkingListener);
+      this.eventEmitter.on(`analysis.pdf.${streamId}`, pdfListener);
       this.eventEmitter.on(`analysis.complete.${streamId}`, completeListener);
       this.eventEmitter.on(`analysis.error.${streamId}`, errorListener);
 
@@ -109,6 +118,7 @@ export class SSEController {
         this.eventEmitter.removeListener(`analysis.chunk.${streamId}`, chunkListener);
         this.eventEmitter.removeListener(`analysis.tool.${streamId}`, toolListener);
         this.eventEmitter.removeListener(`analysis.thinking.${streamId}`, thinkingListener);
+        this.eventEmitter.removeListener(`analysis.pdf.${streamId}`, pdfListener);
         this.eventEmitter.removeListener(`analysis.complete.${streamId}`, completeListener);
         this.eventEmitter.removeListener(`analysis.error.${streamId}`, errorListener);
         this.streamService.endSession(streamId);

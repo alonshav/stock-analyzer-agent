@@ -61,6 +61,33 @@ export class AgentService {
             this.logger.debug(`Executing tool: ${mcpTool.name}`);
             const result = await this.toolRegistry.executeTool(mcpTool.name, args);
             this.logger.debug(`Tool ${mcpTool.name} returned result type: ${typeof result}`);
+
+            // Emit PDF event if this is a PDF generation tool
+            if (mcpTool.name === 'generate_pdf' && result && result.content && result.content[0]) {
+              try {
+                const resultText = result.content[0].text;
+                const pdfData = JSON.parse(resultText);
+
+                if (pdfData.success && pdfData.pdfBase64) {
+                  // Extract session ID from args if available
+                  const sessionId = (args as any).sessionId;
+
+                  if (sessionId) {
+                    this.logger.log(`[PDF] Emitting PDF event for session ${sessionId}`);
+                    this.eventEmitter.emit(`analysis.pdf.${sessionId}`, {
+                      ticker: pdfData.ticker,
+                      pdfBase64: pdfData.pdfBase64,
+                      fileSize: pdfData.fileSize,
+                      reportType: pdfData.reportType,
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
+                }
+              } catch (parseError) {
+                this.logger.error('Failed to parse PDF tool result:', parseError);
+              }
+            }
+
             return result;
           } catch (error) {
             this.logger.error(`Error in tool ${mcpTool.name}:`, error);
