@@ -61,33 +61,6 @@ export class AgentService {
             this.logger.debug(`Executing tool: ${mcpTool.name}`);
             const result = await this.toolRegistry.executeTool(mcpTool.name, args);
             this.logger.debug(`Tool ${mcpTool.name} returned result type: ${typeof result}`);
-
-            // Emit PDF event if this is a PDF generation tool
-            if (mcpTool.name === 'generate_pdf' && result && result.content && result.content[0]) {
-              try {
-                const resultText = result.content[0].text;
-                const pdfData = JSON.parse(resultText);
-
-                if (pdfData.success && pdfData.pdfBase64) {
-                  // Extract session ID from args if available
-                  const sessionId = (args as any).sessionId;
-
-                  if (sessionId) {
-                    this.logger.log(`[PDF] Emitting PDF event for session ${sessionId}`);
-                    this.eventEmitter.emit(`analysis.pdf.${sessionId}`, {
-                      ticker: pdfData.ticker,
-                      pdfBase64: pdfData.pdfBase64,
-                      fileSize: pdfData.fileSize,
-                      reportType: pdfData.reportType,
-                      timestamp: new Date().toISOString(),
-                    });
-                  }
-                }
-              } catch (parseError) {
-                this.logger.error('Failed to parse PDF tool result:', parseError);
-              }
-            }
-
             return result;
           } catch (error) {
             this.logger.error(`Error in tool ${mcpTool.name}:`, error);
@@ -240,6 +213,8 @@ export class AgentService {
       });
 
       let messageCount = 0;
+      let pendingPDFToolId: string | undefined;
+
       for await (const message of stream) {
         try {
           messageCount++;
@@ -273,6 +248,13 @@ export class AgentService {
                   this.logger.log(`[STREAM] Thinking block received`);
                 } else if (block.type === 'tool_use') {
                   this.logger.log(`[STREAM] Tool use block: name=${block.name}, id=${block.id}`);
+
+                  // Track PDF tool calls (SDK prefixes with mcp__server-name__)
+                  if (block.name === 'mcp__stock-analyzer__generate_pdf' || block.name === 'generate_pdf') {
+                    pendingPDFToolId = block.id;
+                    this.logger.log(`[PDF] Tracking PDF tool call: ${block.id}`);
+                  }
+
                   if (sessionId) {
                     // Emit tool use event
                     this.eventEmitter.emit(`analysis.tool.${sessionId}`, {
@@ -300,7 +282,49 @@ export class AgentService {
 
             fullContent += content;
             this.logger.log(`[STREAM] Total content so far: ${fullContent.length} chars`);
-          } else {
+          }
+          // Handle user messages (tool results)
+          else if (message.type === 'user' && pendingPDFToolId) {
+            const apiMessage = message.message;
+            this.logger.log(`[STREAM] User message (tool result) with ${apiMessage.content?.length || 0} blocks`);
+
+            if (Array.isArray(apiMessage.content)) {
+              for (const block of apiMessage.content) {
+                // Check for tool_result blocks matching our PDF tool
+                if (block.type === 'tool_result' && block.tool_use_id === pendingPDFToolId) {
+                  this.logger.log(`[PDF] Found tool result for PDF tool: ${pendingPDFToolId}`);
+
+                  try {
+                    // Extract PDF data from tool result content
+                    if (Array.isArray(block.content)) {
+                      for (const resultBlock of block.content) {
+                        if (resultBlock.type === 'text') {
+                          const pdfData = JSON.parse(resultBlock.text);
+
+                          if (pdfData.success && pdfData.pdfBase64 && sessionId) {
+                            this.logger.log(`[PDF] Emitting PDF event for session ${sessionId}`);
+                            this.eventEmitter.emit(`analysis.pdf.${sessionId}`, {
+                              ticker: pdfData.ticker,
+                              pdfBase64: pdfData.pdfBase64,
+                              fileSize: pdfData.fileSize,
+                              reportType: pdfData.reportType,
+                              timestamp: new Date().toISOString(),
+                            });
+                          }
+                        }
+                      }
+                    }
+                  } catch (parseError) {
+                    this.logger.error('[PDF] Failed to parse PDF tool result:', parseError);
+                  }
+
+                  // Clear pending PDF tracking
+                  pendingPDFToolId = undefined;
+                }
+              }
+            }
+          }
+          else {
             this.logger.log(`[STREAM] Non-assistant message type: ${message.type}`);
           }
         } catch (messageError) {

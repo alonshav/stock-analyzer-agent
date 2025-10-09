@@ -216,10 +216,15 @@ export class StreamManagerService {
           case 'complete':
             // Final update with executive summary
             const finalBuffer = this.streamBuffers.get(chatId) || '';
-            const summary = data.executiveSummary;
+            const summary = data.executiveSummary || finalBuffer;
             const duration = Math.round(data.metadata.duration / 1000); // Convert to seconds
 
-            // Update with complete analysis
+            // Update with complete analysis (only if we have content)
+            if (!summary) {
+              this.logger.log('Complete event with no summary, skipping final update');
+              break;
+            }
+
             const completeText = this.formatCompleteAnalysis(
               summary,
               ticker,
