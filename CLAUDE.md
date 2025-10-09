@@ -479,3 +479,4 @@ npm run start:agent
 - `fullAnalysis` field is optional (empty by default)
 
 **Always kill servers after finishing debugging/testing/coding with a process**
+- always have private methods at the end of a given ts file, and public methods after the constructor, properties before the constructor
