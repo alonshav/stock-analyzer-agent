@@ -5,6 +5,16 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { STOCK_VALUATION_FRAMEWORK } from './prompts/framework-v2.3';
 import { createToolRegistry } from '@stock-analyzer/mcp/tools';
 import { z } from 'zod';
+import {
+  isToolName,
+  ToolName,
+  createEventName,
+  StreamEventType,
+  FRAMEWORK_VERSION,
+  DEFAULT_MODEL,
+  DEFAULT_MAX_TURNS,
+  DEFAULT_MAX_THINKING_TOKENS
+} from '@stock-analyzer/shared/types';
 
 export interface AnalysisOptions {
   generatePDF?: boolean;
@@ -111,8 +121,8 @@ export class AgentService {
       executiveSummary,
       metadata: {
         analysisDate: new Date().toISOString(),
-        framework: 'v2.3',
-        model: this.config.get('ANTHROPIC_MODEL') || 'claude-sonnet-4-20250514',
+        framework: FRAMEWORK_VERSION,
+        model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
         duration,
       },
     };
@@ -120,7 +130,7 @@ export class AgentService {
     if (sessionId) {
       // For SSE streaming: don't send executiveSummary again (already streamed as chunks)
       // Send completion signal with metadata only
-      this.eventEmitter.emit(`analysis.complete.${sessionId}`, {
+      this.eventEmitter.emit(createEventName(StreamEventType.COMPLETE, sessionId), {
         ticker,
         timestamp: result.timestamp,
         metadata: result.metadata,
@@ -201,10 +211,10 @@ export class AgentService {
       const stream = query({
         prompt,
         options: {
-          maxThinkingTokens: 10000,
+          maxThinkingTokens: DEFAULT_MAX_THINKING_TOKENS,
           systemPrompt: STOCK_VALUATION_FRAMEWORK,
-          model: this.config.get('ANTHROPIC_MODEL') || 'claude-sonnet-4-20250514',
-          maxTurns: parseInt(this.config.get('ANTHROPIC_MAX_TURNS') || '20'),
+          model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
+          maxTurns: parseInt(this.config.get('ANTHROPIC_MAX_TURNS') || String(DEFAULT_MAX_TURNS)),
           permissionMode: 'bypassPermissions', // Auto-approve all tool use
           mcpServers: {
             'stock-analyzer': this.mcpServer,
@@ -238,9 +248,9 @@ export class AgentService {
                 } else if (block.type === 'thinking') {
                   // Emit thinking progress to show the agent is working
                   if (sessionId) {
-                    this.eventEmitter.emit(`analysis.thinking.${sessionId}`, {
+                    this.eventEmitter.emit(createEventName(StreamEventType.THINKING, sessionId), {
                       ticker,
-                      type: 'thinking',
+                      type: StreamEventType.THINKING,
                       message: 'Analyzing data...',
                       timestamp: new Date().toISOString(),
                     });
@@ -249,18 +259,19 @@ export class AgentService {
                 } else if (block.type === 'tool_use') {
                   this.logger.log(`[STREAM] Tool use block: name=${block.name}, id=${block.id}`);
 
-                  // Track PDF tool calls (SDK prefixes with mcp__server-name__)
-                  if (block.name === 'mcp__stock-analyzer__generate_pdf' || block.name === 'generate_pdf') {
+                  // Track PDF tool calls using enum helper
+                  if (isToolName(block.name, ToolName.GENERATE_PDF)) {
                     pendingPDFToolId = block.id;
                     this.logger.log(`[PDF] Tracking PDF tool call: ${block.id}`);
                   }
 
                   if (sessionId) {
-                    // Emit tool use event
-                    this.eventEmitter.emit(`analysis.tool.${sessionId}`, {
+                    // Emit tool use event with input arguments
+                    this.eventEmitter.emit(createEventName(StreamEventType.TOOL, sessionId), {
                       ticker,
                       toolName: block.name,
                       toolId: block.id,
+                      toolInput: block.input, // Include tool arguments
                       timestamp: new Date().toISOString(),
                     });
                   }
@@ -271,7 +282,7 @@ export class AgentService {
             // Emit text content
             if (sessionId && content) {
               this.logger.log(`[STREAM] Emitting chunk: ${content.length} chars`);
-              this.eventEmitter.emit(`analysis.chunk.${sessionId}`, {
+              this.eventEmitter.emit(createEventName(StreamEventType.CHUNK, sessionId), {
                 ticker,
                 type: 'text',
                 content,
@@ -303,7 +314,7 @@ export class AgentService {
 
                           if (pdfData.success && pdfData.pdfBase64 && sessionId) {
                             this.logger.log(`[PDF] Emitting PDF event for session ${sessionId}`);
-                            this.eventEmitter.emit(`analysis.pdf.${sessionId}`, {
+                            this.eventEmitter.emit(createEventName(StreamEventType.PDF, sessionId), {
                               ticker: pdfData.ticker,
                               pdfBase64: pdfData.pdfBase64,
                               fileSize: pdfData.fileSize,

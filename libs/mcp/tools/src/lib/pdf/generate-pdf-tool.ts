@@ -1,4 +1,5 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { ToolName, ReportType } from '@stock-analyzer/shared/types';
 
 /**
  * PDF Generation Provider Interface
@@ -119,7 +120,7 @@ class PDFProviderFactory {
  * MCP Tool Definition for PDF Generation
  */
 export const generatePDFTool: Tool = {
-  name: 'generate_pdf',
+  name: ToolName.GENERATE_PDF,
   description: `Generate a PDF report from markdown content using Anvil PDF API.
 
 Returns the PDF as base64-encoded data for download/transmission.
@@ -142,7 +143,7 @@ Current provider: ${process.env['PDF_PROVIDER'] || 'Anvil'}
       },
       reportType: {
         type: 'string',
-        enum: ['full', 'summary'],
+        enum: [ReportType.FULL, ReportType.SUMMARY],
         description: 'Type of report: "full" or "summary"',
       },
       sessionId: {

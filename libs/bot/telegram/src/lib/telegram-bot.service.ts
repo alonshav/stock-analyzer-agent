@@ -83,9 +83,7 @@ export class TelegramBotService implements OnModuleInit {
       await ctx.sendChatAction('typing');
 
       const initialMsg = await ctx.reply(
-        `🔄 Starting analysis for ${ticker}...\n\n` +
-          `The Agent will use financial data tools to generate analysis.\n` +
-          `Results will stream here in real-time.`
+        `Analyzing ${ticker}...`
       );
 
       // Start streaming from Agent service

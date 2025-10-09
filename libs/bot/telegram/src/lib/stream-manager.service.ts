@@ -1,6 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventSource } from 'eventsource';
 import { Context } from 'telegraf';
+import {
+  StreamEventType,
+  ToolName,
+  isToolName,
+  FinancialDataType,
+  FinancialDataTypeLabel,
+  ReportType,
+  ReportTypeLabel,
+  PeriodType,
+  TimeConstants,
+  TelegramLimits,
+  FRAMEWORK_VERSION
+} from '@stock-analyzer/shared/types';
 
 interface StreamConfig {
   chatId: string;
@@ -23,6 +36,7 @@ interface ToolEvent {
   ticker: string;
   toolName: string;
   toolId: string;
+  toolInput?: any;
   timestamp: string;
 }
 
@@ -74,7 +88,8 @@ export class StreamManagerService {
   private readonly logger = new Logger(StreamManagerService.name);
   private activeStreams = new Map<string, EventSource>();
   private streamBuffers = new Map<string, string>();
-  private toolCallsCount = new Map<string, number>();
+  private streamStartTimes = new Map<string, number>();
+  private lastInterventionTimes = new Map<string, number>();
 
   async startStream(config: StreamConfig): Promise<void> {
     const { chatId, ticker, ctx, messageId, agentUrl } = config;
@@ -85,99 +100,126 @@ export class StreamManagerService {
       userId: ctx.from?.id.toString() || 'anonymous',
       sessionId: `telegram-${chatId}`,
       platform: 'telegram',
-      prompt: `Analyze ${ticker} using Framework v2.3`,
+      prompt: `Analyze ${ticker} using Framework ${FRAMEWORK_VERSION}`,
     });
 
     const eventSource = new EventSource(`${streamUrl}?${params}`);
     this.activeStreams.set(chatId, eventSource);
     this.streamBuffers.set(chatId, '');
-    this.toolCallsCount.set(chatId, 0);
+    this.streamStartTimes.set(chatId, Date.now());
+    this.lastInterventionTimes.set(chatId, Date.now());
 
     let currentMessageId = messageId;
     let lastUpdateTime = Date.now();
     let updateCounter = 0;
+    let hasReceivedContent = false;
+
+    // Time-based intervention messages
+    const interventionTimer = setInterval(async () => {
+      if (!this.activeStreams.has(chatId)) {
+        clearInterval(interventionTimer);
+        return;
+      }
+
+      const elapsed = Date.now() - this.streamStartTimes.get(chatId)!;
+      const timeSinceLastIntervention = Date.now() - this.lastInterventionTimes.get(chatId)!;
+
+      // Only send interventions if no recent updates
+      if (timeSinceLastIntervention < TimeConstants.INTERVENTION_MIN_GAP) return;
+
+      try {
+        if (elapsed > TimeConstants.INTERVENTION_90S) {
+          await ctx.sendChatAction('typing');
+          await ctx.reply('Taking a bit longer than usual, but quality analysis takes time! 🔬');
+          this.lastInterventionTimes.set(chatId, Date.now());
+        } else if (elapsed > TimeConstants.INTERVENTION_60S) {
+          await ctx.sendChatAction('typing');
+          await ctx.reply('Almost there... Generating your report 📄');
+          this.lastInterventionTimes.set(chatId, Date.now());
+        } else if (elapsed > TimeConstants.INTERVENTION_30S) {
+          await ctx.sendChatAction('typing');
+          await ctx.reply('Still analyzing... This is thorough analysis, hang tight! ⏳');
+          this.lastInterventionTimes.set(chatId, Date.now());
+        }
+      } catch {
+        // Ignore typing action failures
+      }
+    }, TimeConstants.INTERVENTION_CHECK_INTERVAL);
 
     eventSource.onmessage = async (event: MessageEvent) => {
       try {
         const data: StreamEvent = JSON.parse(event.data);
+        this.lastInterventionTimes.set(chatId, Date.now()); // Reset intervention timer on any event
 
         switch (data.type) {
-          case 'connected':
+          case StreamEventType.CONNECTED:
             this.logger.log(`Stream connected for ${ticker}: ${data.streamId}`);
             break;
 
-          case 'chunk':
+          case StreamEventType.CHUNK:
+            hasReceivedContent = true;
             // Append LLM output to buffer
             const buffer = this.streamBuffers.get(chatId) || '';
             const updatedBuffer = buffer + data.content;
             this.streamBuffers.set(chatId, updatedBuffer);
             updateCounter++;
 
-            // Update message every second or every 10 chunks
+            // Update more frequently using TimeConstants
             const shouldUpdate =
-              Date.now() - lastUpdateTime > 1000 ||
-              updateCounter >= 10;
+              Date.now() - lastUpdateTime > TimeConstants.STREAM_UPDATE_INTERVAL ||
+              updateCounter >= TimeConstants.STREAM_CHUNK_THRESHOLD;
 
             if (shouldUpdate) {
               updateCounter = 0;
               lastUpdateTime = Date.now();
 
-              // Telegram message limit is 4096 chars
-              const displayText = this.formatBuffer(updatedBuffer, ticker);
+              const displayText = updatedBuffer;
 
               try {
-                await ctx.telegram.editMessageText(
-                  ctx.chat!.id,
-                  currentMessageId,
-                  undefined,
-                  displayText
-                );
+                // Smart message strategy: append to existing message up to Telegram limit
+                if (displayText.length <= TelegramLimits.SAFE_MESSAGE_LENGTH) {
+                  await ctx.telegram.editMessageText(
+                    ctx.chat!.id,
+                    currentMessageId,
+                    undefined,
+                    displayText
+                  );
+                } else {
+                  // Send new message when overflow
+                  const newMsg = await ctx.reply(displayText.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                  currentMessageId = newMsg.message_id;
+                  this.streamBuffers.set(chatId, displayText.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                }
               } catch (error) {
                 const err = error as Error;
-                // Handle edit failures
                 if (err.message?.includes('message is not modified')) {
                   // Content unchanged, skip
                 } else if (err.message?.includes('too many requests')) {
-                  // Rate limited
                   this.logger.debug('Rate limited, skipping update');
                 } else {
                   // Send new message if edit fails
-                  const newMsg = await ctx.reply(
-                    '📊 Continuing analysis...\n\n' + displayText.slice(-3000)
-                  );
-                  currentMessageId = newMsg.message_id;
+                  try {
+                    const newMsg = await ctx.reply(displayText.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                    currentMessageId = newMsg.message_id;
+                  } catch {
+                    // Ignore if send also fails
+                  }
                 }
               }
             }
             break;
 
-          case 'tool':
-            // Display tool usage to user
-            const toolCount = (this.toolCallsCount.get(chatId) || 0) + 1;
-            this.toolCallsCount.set(chatId, toolCount);
-
-            const toolMessage = `📊 Using tool: ${data.toolName}`;
-            this.logger.log(`Tool called: ${data.toolName} (${data.toolId})`);
-
-            // Add tool notification to buffer
-            const currentBuffer = this.streamBuffers.get(chatId) || '';
-            this.streamBuffers.set(chatId, currentBuffer + `\n\n${toolMessage}\n`);
+          case StreamEventType.TOOL:
+            // Rich tool call display with arguments
+            const toolMessage = this.formatToolCall(data);
 
             try {
-              await ctx.telegram.editMessageText(
-                ctx.chat!.id,
-                currentMessageId,
-                undefined,
-                this.formatBuffer(this.streamBuffers.get(chatId) || '', ticker)
-              );
-            } catch {
-              // Ignore edit failures for tool messages
+              await ctx.reply(toolMessage);
+            } catch (error) {
+              this.logger.error('Failed to send tool message:', error);
             }
-            break;
 
-          case 'thinking':
-            // Show thinking indicator
-            this.logger.log(`Agent is thinking for ${ticker}`);
+            // Also show typing indicator
             try {
               await ctx.sendChatAction('typing');
             } catch {
@@ -185,15 +227,22 @@ export class StreamManagerService {
             }
             break;
 
-          case 'pdf':
+          case StreamEventType.THINKING:
+            // Show typing indicator for thinking blocks
+            try {
+              await ctx.sendChatAction('typing');
+            } catch {
+              // Ignore if typing action fails
+            }
+            break;
+
+          case StreamEventType.PDF:
             // Receive PDF and send as document
             this.logger.log(`Received PDF for ${ticker}: ${data.fileSize} bytes, type: ${data.reportType}`);
             try {
-              // Decode base64 to buffer
               const pdfBuffer = Buffer.from(data.pdfBase64, 'base64');
-
-              // Send as document
               const filename = `${ticker}_${data.reportType}_analysis.pdf`;
+
               await ctx.telegram.sendDocument(
                 ctx.chat!.id,
                 {
@@ -213,48 +262,26 @@ export class StreamManagerService {
             }
             break;
 
-          case 'complete':
-            // Final update with executive summary
-            const finalBuffer = this.streamBuffers.get(chatId) || '';
-            const summary = data.executiveSummary || finalBuffer;
-            const duration = Math.round(data.metadata.duration / 1000); // Convert to seconds
+          case StreamEventType.COMPLETE:
+            clearInterval(interventionTimer);
 
-            // Update with complete analysis (only if we have content)
-            if (!summary) {
-              this.logger.log('Complete event with no summary, skipping final update');
-              break;
-            }
+            const duration = Math.round(data.metadata.duration / 1000);
 
-            const completeText = this.formatCompleteAnalysis(
-              summary,
-              ticker,
-              duration,
-              data.metadata.model
-            );
-
-            try {
-              await ctx.telegram.editMessageText(
-                ctx.chat!.id,
-                currentMessageId,
-                undefined,
-                completeText
+            // Only send completion metadata if we have content
+            if (hasReceivedContent) {
+              await ctx.reply(
+                `✅ Analysis complete!\n\n` +
+                `⏱️ Duration: ${duration}s\n` +
+                `🤖 Model: ${data.metadata.model}\n` +
+                `📊 Framework: ${data.metadata.framework}`
               );
-            } catch {
-              await ctx.reply(completeText);
             }
-
-            // Send completion message
-            await ctx.reply(
-              `✅ Analysis complete for ${ticker}!\n\n` +
-              `⏱️ Duration: ${duration}s\n` +
-              `🤖 Model: ${data.metadata.model}\n` +
-              `📊 Framework: ${data.metadata.framework}`
-            );
 
             this.cleanup(chatId);
             break;
 
-          case 'error':
+          case StreamEventType.ERROR:
+            clearInterval(interventionTimer);
             await ctx.reply(`❌ Error: ${data.message}`);
             this.cleanup(chatId);
             break;
@@ -266,19 +293,21 @@ export class StreamManagerService {
 
     eventSource.onerror = async (error: any) => {
       this.logger.error('SSE error:', error);
+      clearInterval(interventionTimer);
       if (eventSource.readyState === EventSource.CLOSED) {
         await ctx.reply('❌ Connection lost. Please try again if needed.');
         this.cleanup(chatId);
       }
     };
 
-    // Timeout after 5 minutes
+    // Timeout after configured duration
     setTimeout(() => {
       if (this.activeStreams.has(chatId)) {
+        clearInterval(interventionTimer);
         ctx.reply('⏱️ Analysis timeout. Please try again if needed.');
         this.cleanup(chatId);
       }
-    }, 300000);
+    }, TimeConstants.STREAM_TIMEOUT);
   }
 
   hasActiveStream(chatId: string): boolean {
@@ -300,33 +329,66 @@ export class StreamManagerService {
       this.activeStreams.delete(chatId);
     }
     this.streamBuffers.delete(chatId);
-    this.toolCallsCount.delete(chatId);
+    this.streamStartTimes.delete(chatId);
+    this.lastInterventionTimes.delete(chatId);
   }
 
-  private formatBuffer(buffer: string, ticker: string): string {
-    if (buffer.length > 3500) {
-      return `🔄 Analysis for ${ticker} (truncated)...\n\n` +
-             '...' + buffer.slice(-3500);
+  private formatToolCall(data: ToolEvent): string {
+    // Remove MCP prefix for cleaner display
+    let cleanToolName = data.toolName
+      .replace('mcp__stock-analyzer__', '')
+      .replace(/_/g, ' ')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+
+    // Parse tool input for rich context
+    const input = data.toolInput || {};
+
+    if (isToolName(data.toolName, ToolName.FETCH_COMPANY_DATA)) {
+      return this.formatFetchCompanyData(input, data.ticker);
+    } else if (isToolName(data.toolName, ToolName.CALCULATE_DCF)) {
+      return this.formatCalculateDCF(input, data.ticker);
+    } else if (isToolName(data.toolName, ToolName.GENERATE_PDF)) {
+      return this.formatGeneratePDF(input, data.ticker);
+    } else {
+      return `🔧 ${cleanToolName}...`;
     }
-    return `🔄 Analysis for ${ticker}...\n\n${buffer}`;
   }
 
-  private formatCompleteAnalysis(
-    summary: string,
-    ticker: string,
-    duration: number,
-    model: string
-  ): string {
-    // Truncate if needed for Telegram's 4096 char limit
-    let formattedSummary = summary;
-    if (summary.length > 3800) {
-      formattedSummary = summary.slice(0, 3800) + '...\n\n[Summary truncated]';
+  private formatFetchCompanyData(input: any, ticker: string): string {
+    const dataTypes = input.dataTypes || [];
+    const period = input.period || PeriodType.QUARTERLY;
+    const limit = input.limit || 4;
+
+    let message = `📊 Fetching ${ticker} financial data...\n`;
+
+    if (dataTypes.length > 0) {
+      const typeLabels = dataTypes.map((type: string) => {
+        return FinancialDataTypeLabel[type as FinancialDataType] || type;
+      });
+      message += `• Data: ${typeLabels.join(', ')}\n`;
     }
 
-    return (
-      `✅ Analysis Complete: ${ticker}\n\n` +
-      `${formattedSummary}\n\n` +
-      `⏱️ Duration: ${duration}s | 🤖 ${model}`
-    );
+    message += `• Period: ${period === PeriodType.QUARTERLY ? 'Last ' + limit + ' quarters' : 'Last ' + limit + ' years'}`;
+
+    return message;
+  }
+
+  private formatCalculateDCF(input: any, ticker: string): string {
+    const projectionYears = input.projectionYears || 5;
+    const discountRate = input.discountRate || 0.10;
+
+    return `🧮 Running DCF valuation...\n` +
+           `• Ticker: ${ticker}\n` +
+           `• Projection: ${projectionYears} years\n` +
+           `• Discount rate: ${(discountRate * 100).toFixed(1)}%`;
+  }
+
+  private formatGeneratePDF(input: any, ticker: string): string {
+    const reportType = input.reportType || ReportType.SUMMARY;
+    const label = ReportTypeLabel[reportType as ReportType] || reportType;
+
+    return `📄 Generating ${label} PDF report for ${ticker}...`;
   }
 }

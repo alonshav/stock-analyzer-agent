@@ -35,6 +35,7 @@ export interface StreamToolResponse {
   ticker: string;
   toolName: string;
   toolId: string;
+  toolInput?: any; // Tool arguments/parameters
   timestamp: string;
 }
 

@@ -3,6 +3,7 @@ import { Response, Request } from 'express';
 import { StreamService } from '@stock-analyzer/agent/core';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { StreamResponse } from './dto/analysis.dto';
+import { createEventName, StreamEventType, FRAMEWORK_VERSION } from '@stock-analyzer/shared/types';
 
 @Controller('api/analyze')
 export class SSEController {
@@ -35,7 +36,7 @@ export class SSEController {
     try {
       streamId = await this.streamService.startAnalysisStream({
         ticker: ticker.toUpperCase(),
-        userPrompt: userPrompt || `Analyze ${ticker} using Framework v2.3`,
+        userPrompt: userPrompt || `Analyze ${ticker} using Framework ${FRAMEWORK_VERSION}`,
         userId,
         sessionId: sessionId || `sse-${Date.now()}`,
         platform,
@@ -44,7 +45,7 @@ export class SSEController {
 
       // Send connection event
       const connectionResponse: StreamResponse = {
-        type: 'connected',
+        type: StreamEventType.CONNECTED,
         streamId,
         ticker: ticker.toUpperCase(),
       };
@@ -53,7 +54,7 @@ export class SSEController {
       // Event listeners
       const chunkListener = (data: any) => {
         const chunkResponse: StreamResponse = {
-          type: 'chunk',
+          type: StreamEventType.CHUNK,
           ...data,
         };
         res.write(`data: ${JSON.stringify(chunkResponse)}\n\n`);
@@ -61,7 +62,7 @@ export class SSEController {
 
       const toolListener = (data: any) => {
         const toolResponse: StreamResponse = {
-          type: 'tool',
+          type: StreamEventType.TOOL,
           ...data,
         };
         res.write(`data: ${JSON.stringify(toolResponse)}\n\n`);
@@ -69,7 +70,7 @@ export class SSEController {
 
       const thinkingListener = (data: any) => {
         const thinkingResponse: StreamResponse = {
-          type: 'thinking',
+          type: StreamEventType.THINKING,
           ...data,
         };
         res.write(`data: ${JSON.stringify(thinkingResponse)}\n\n`);
@@ -77,7 +78,7 @@ export class SSEController {
 
       const pdfListener = (data: any) => {
         const pdfResponse: StreamResponse = {
-          type: 'pdf',
+          type: StreamEventType.PDF,
           ...data,
         };
         res.write(`data: ${JSON.stringify(pdfResponse)}\n\n`);
@@ -85,7 +86,7 @@ export class SSEController {
 
       const completeListener = (data: any) => {
         const completeResponse: StreamResponse = {
-          type: 'complete',
+          type: StreamEventType.COMPLETE,
           ticker: data.ticker,
           metadata: data.metadata,
           // Don't send executiveSummary - already streamed as chunks
@@ -96,7 +97,7 @@ export class SSEController {
 
       const errorListener = (data: any) => {
         const errorResponse: StreamResponse = {
-          type: 'error',
+          type: StreamEventType.ERROR,
           message: data.message,
           timestamp: data.timestamp,
         };
@@ -104,30 +105,30 @@ export class SSEController {
         res.end();
       };
 
-      // Register event listeners
-      this.eventEmitter.on(`analysis.chunk.${streamId}`, chunkListener);
-      this.eventEmitter.on(`analysis.tool.${streamId}`, toolListener);
-      this.eventEmitter.on(`analysis.thinking.${streamId}`, thinkingListener);
-      this.eventEmitter.on(`analysis.pdf.${streamId}`, pdfListener);
-      this.eventEmitter.on(`analysis.complete.${streamId}`, completeListener);
-      this.eventEmitter.on(`analysis.error.${streamId}`, errorListener);
+      // Register event listeners using enum-based names
+      this.eventEmitter.on(createEventName(StreamEventType.CHUNK, streamId), chunkListener);
+      this.eventEmitter.on(createEventName(StreamEventType.TOOL, streamId), toolListener);
+      this.eventEmitter.on(createEventName(StreamEventType.THINKING, streamId), thinkingListener);
+      this.eventEmitter.on(createEventName(StreamEventType.PDF, streamId), pdfListener);
+      this.eventEmitter.on(createEventName(StreamEventType.COMPLETE, streamId), completeListener);
+      this.eventEmitter.on(createEventName(StreamEventType.ERROR, streamId), errorListener);
 
       // Handle client disconnect
       req.on('close', () => {
         this.logger.log(`Client disconnected: ${ticker}`);
-        this.eventEmitter.removeListener(`analysis.chunk.${streamId}`, chunkListener);
-        this.eventEmitter.removeListener(`analysis.tool.${streamId}`, toolListener);
-        this.eventEmitter.removeListener(`analysis.thinking.${streamId}`, thinkingListener);
-        this.eventEmitter.removeListener(`analysis.pdf.${streamId}`, pdfListener);
-        this.eventEmitter.removeListener(`analysis.complete.${streamId}`, completeListener);
-        this.eventEmitter.removeListener(`analysis.error.${streamId}`, errorListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.CHUNK, streamId), chunkListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.TOOL, streamId), toolListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.THINKING, streamId), thinkingListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.PDF, streamId), pdfListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.COMPLETE, streamId), completeListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.ERROR, streamId), errorListener);
         this.streamService.endSession(streamId);
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('SSE error:', errorMessage);
       const errorResponse: StreamResponse = {
-        type: 'error',
+        type: StreamEventType.ERROR,
         message: errorMessage,
         timestamp: new Date().toISOString(),
       };

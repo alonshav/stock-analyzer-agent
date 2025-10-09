@@ -79,6 +79,9 @@ libs/                        # All business logic
 ## Development Commands
 
 ```bash
+# Quick Start (build + run both services)
+npm run start:all           # Build agent + telegram-bot, then run both
+
 # Development (all services in parallel)
 npm run dev
 
@@ -97,9 +100,9 @@ nx build <library-name>     # Build specific library
 nx run-many --target=build --all
 
 # Production start
-npm run start:agent
-npm run start:telegram-bot
-npm run start:mcp-server
+npm run start:agent         # Start agent only
+npm run start:telegram-bot  # Start Telegram bot only
+npm run start:mcp-server    # Start MCP server only
 
 # Testing
 npm run test                # All tests
@@ -284,7 +287,10 @@ export FMP_API_KEY=your-api-key
 The agent streams analysis in real-time via Server-Sent Events (SSE):
 
 ```typescript
-// Agent emits events during analysis
+// Agent emits events during analysis (libs/agent/core/src/lib/agent.service.ts)
+// Event emission happens in executeQuery() method, NOT in tool() wrapper
+
+// Text chunks from LLM response
 this.eventEmitter.emit(`analysis.chunk.${sessionId}`, {
   ticker,
   type: 'text',
@@ -293,32 +299,60 @@ this.eventEmitter.emit(`analysis.chunk.${sessionId}`, {
   timestamp: new Date().toISOString(),
 });
 
+// Thinking indicators
+this.eventEmitter.emit(`analysis.thinking.${sessionId}`, {
+  ticker,
+  type: 'thinking',
+  message: 'Analyzing data...',
+  timestamp: new Date().toISOString(),
+});
+
+// Tool usage notifications
 this.eventEmitter.emit(`analysis.tool.${sessionId}`, {
   ticker,
-  toolName: 'fetch_company_data',
+  toolName: 'mcp__stock-analyzer__fetch_company_data',
   toolId: 'toolu_xxx',
   timestamp: new Date().toISOString(),
 });
 
-this.eventEmitter.emit(`analysis.complete.${sessionId}`, {
+// PDF generation results (emitted after processing tool results)
+this.eventEmitter.emit(`analysis.pdf.${sessionId}`, {
   ticker,
-  executiveSummary: '...',
-  metadata: { analysisDate, framework, model, duration },
+  pdfBase64: '...',  // Base64-encoded PDF binary
+  fileSize: 21590,
+  reportType: 'summary' | 'full',
+  timestamp: new Date().toISOString(),
 });
 
-// SSE Controller forwards to client
+// Analysis complete
+this.eventEmitter.emit(`analysis.complete.${sessionId}`, {
+  ticker,
+  metadata: { analysisDate, framework, model, duration },
+  // executiveSummary omitted (already streamed as chunks)
+});
+
+// SSE Controller forwards to client (libs/agent/api/src/lib/sse.controller.ts)
 res.write(`data: ${JSON.stringify({
-  type: 'chunk' | 'tool' | 'complete' | 'error',
+  type: 'connected' | 'chunk' | 'thinking' | 'tool' | 'pdf' | 'complete' | 'error',
   ...eventData
 })}\n\n`);
 ```
 
 **Event Flow:**
-1. `connected` - Stream established
-2. `chunk` - Text content from LLM (thinking + response)
-3. `tool` - Tool called (toolName, toolId)
-4. `complete` - Analysis finished (executiveSummary + metadata)
-5. `error` - Error occurred
+1. `connected` - Stream established (streamId, ticker)
+2. `thinking` - Agent is thinking (shows typing indicator in Telegram)
+3. `chunk` - Text content from LLM (incremental response text)
+4. `tool` - Tool called (toolName with mcp__ prefix, toolId)
+5. `pdf` - PDF generated (pdfBase64, fileSize, reportType)
+6. `complete` - Analysis finished (metadata only, no summary duplication)
+7. `error` - Error occurred (message, timestamp)
+
+**Critical Implementation Details:**
+- PDF emission happens in `executeQuery()` when processing `user` messages containing tool results
+- Tool names are prefixed with `mcp__stock-analyzer__` by the SDK
+- PDF data is transmitted as base64-encoded binary in SSE stream
+- Telegram bot decodes base64 and sends PDF as document via `sendDocument()`
+- Tool() wrapper functions must remain simple - NO event emission in tool execution
 
 ## Environment Variables
 
@@ -479,5 +513,73 @@ npm run start:agent
 - Tool event emission for real-time visibility into data fetching
 - `fullAnalysis` field is optional (empty by default)
 
-**Always kill servers after finishing debugging/testing/coding with a process**
-- always have private methods at the end of a given ts file, and public methods after the constructor, properties before the constructor
+## Telegram Bot Integration
+
+The Telegram bot (`libs/bot/telegram/src/lib/stream-manager.service.ts`) connects to the Agent's SSE endpoint and handles real-time event streaming:
+
+**Event Handling:**
+- `thinking` → Sends typing action (`ctx.sendChatAction('typing')`)
+- `chunk` → Updates message with streaming analysis text (throttled: 1s or 10 chunks)
+- `tool` → Shows tool usage notification in buffer
+- `pdf` → Decodes base64, sends as document via `ctx.telegram.sendDocument()`
+- `complete` → Displays final summary and completion metadata
+
+**Critical Implementation Details:**
+- **No Markdown parse mode** - Messages sent as plain text to avoid parsing errors with tool names containing underscores
+- **Message throttling** - Updates every 1 second OR every 10 chunks to avoid rate limits
+- **Buffer management** - Maintains stream buffer per chat ID, truncates at 3500 chars
+- **Error handling** - Gracefully handles edit failures, creates new messages if needed
+- **PDF transmission** - Converts base64 → Buffer → Telegram document with caption
+- **Cleanup** - Closes EventSource and clears buffers on stream completion/error
+
+**Telegram Bot Environment:**
+```bash
+TELEGRAM_BOT_TOKEN=...              # Bot token from @BotFather
+AGENT_SERVICE_URL=http://localhost:3001  # Agent API endpoint
+TELEGRAM_BOT_PORT=3002              # Bot webhook port
+```
+
+## PDF Generation via Anvil API
+
+PDF generation (`libs/mcp/tools/src/lib/pdf/generate-pdf-tool.ts`) uses Anvil's REST API:
+
+**Implementation:**
+- **Provider**: Anvil PDF API (https://www.useanvil.com)
+- **Pricing**: Free tier 500 PDFs/month, then $0.10/PDF
+- **Input**: Markdown content, ticker, reportType ('full' | 'summary')
+- **Output**: Base64-encoded PDF binary + file size + provider name
+
+**API Request Format:**
+```typescript
+{
+  title: "AAPL - Executive Summary",
+  type: "markdown",
+  data: [
+    {
+      heading: "AAPL - Executive Summary",
+      content: "*Generated: 1/9/2025*",
+      fontSize: 10,
+      textColor: "#6B7280"
+    },
+    {
+      content: "# Analysis content in markdown..."
+    }
+  ]
+}
+```
+
+**Response Handling:**
+- Anvil returns PDF binary directly (NOT JSON with download URL)
+- Convert binary response to base64: `Buffer.from(arrayBuffer).toString('base64')`
+- Return structured result with success flag, pdfBase64, fileSize, reportType
+
+**Critical**: PDF events are emitted in `agent.service.ts:executeQuery()` when processing tool result messages, NOT in the tool() wrapper function.
+
+## Code Style Conventions
+
+**Always follow these conventions:**
+- **Kill servers** after finishing debugging/testing/coding with a process
+- **Private methods** at the end of TypeScript files
+- **Public methods** after the constructor
+- **Properties** before the constructor
+- **Tool() wrappers** must remain simple - execute tool and return result only, NO side effects or event emission
