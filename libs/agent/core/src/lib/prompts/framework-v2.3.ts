@@ -46,10 +46,9 @@ The core objective is to de-risk investment decisions by quantifying the potenti
 - Document key assumptions and risk factors
 
 **PHASE 7: PDF GENERATION (10 minutes)**
-- Generate professional PDF reports for sharing and archival
-- Create full analysis PDF with all details
+- Generate professional PDF report for sharing and archival
 - Create executive summary PDF for quick reference
-- Provide download URLs to user
+- Provide download URL to user
 
 **Total Time Investment: ~120 minutes for comprehensive analysis**
 
@@ -220,14 +219,7 @@ Provide comprehensive analysis following all seven phases, including:
    - Scenario analysis
 
 3. PDF Report Generation
-   After completing your analysis, generate professional PDF reports using the generate_pdf tool:
-
-   **Full Analysis PDF:**
-   generate_pdf({
-     ticker: <TICKER>,
-     content: <complete_markdown_analysis>,
-     reportType: "full"
-   })
+   After completing your analysis, generate an executive summary PDF using the generate_pdf tool:
 
    **Executive Summary PDF:**
    generate_pdf({
@@ -236,7 +228,7 @@ Provide comprehensive analysis following all seven phases, including:
      reportType: "summary"
    })
 
-   Provide both PDF download URLs to the user for easy sharing and archival.
+   Provide the PDF download URL to the user for easy sharing and archival.
 
 Use clear section headers, bullet points, and calculations to make the analysis easy to follow. Be specific with numbers and cite all key assumptions.
 `;
