@@ -3,8 +3,8 @@ import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AgentService } from './agent.service';
 import { StreamService } from './stream.service';
-import { SessionManagerModule } from 'session-manager';
-import { HooksModule } from 'hooks';
+import { SessionManagerModule } from '@stock-analyzer/agent/session';
+import { HooksModule } from '@stock-analyzer/agent/hooks';
 
 @Module({
   imports: [

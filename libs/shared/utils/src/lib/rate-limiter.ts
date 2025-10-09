@@ -50,7 +50,7 @@ export class RateLimiter {
 
   async checkLimit(
     identifier: string,
-    tokensRequired: number = 1,
+    tokensRequired = 1,
     capacity?: number,
     refillRate?: number
   ): Promise<boolean> {
@@ -73,8 +73,8 @@ export class RateLimiter {
 
   async waitForTokens(
     identifier: string,
-    tokensRequired: number = 1,
-    maxWaitTime: number = 30000,
+    tokensRequired = 1,
+    maxWaitTime = 30000,
     capacity?: number,
     refillRate?: number
   ): Promise<boolean> {

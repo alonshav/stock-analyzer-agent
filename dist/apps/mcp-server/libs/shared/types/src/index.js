@@ -17,8 +17,10 @@ var src_exports = {};
 module.exports = __toCommonJS(src_exports);
 __reExport(src_exports, require("./lib/shared-types"), module.exports);
 __reExport(src_exports, require("./lib/company.types"), module.exports);
+__reExport(src_exports, require("./lib/enums"), module.exports);
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ...require("./lib/shared-types"),
-  ...require("./lib/company.types")
+  ...require("./lib/company.types"),
+  ...require("./lib/enums")
 });

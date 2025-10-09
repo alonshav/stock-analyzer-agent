@@ -8,8 +8,8 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentService } from './agent.service';
 import { MockSDKStream } from '../test-utils/mock-sdk-stream';
-import { SessionManagerService } from 'session-manager';
-import { HooksService } from 'hooks';
+import { SessionManagerService } from '@stock-analyzer/agent/session';
+import { HooksService } from '@stock-analyzer/agent/hooks';
 
 // Mock the Anthropic SDK
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({

@@ -5,7 +5,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { HooksService } from './hooks.service';
-import { SessionManagerService } from 'session-manager';
+import { SessionManagerService } from '@stock-analyzer/agent/session';
 
 describe('HooksService', () => {
   let service: HooksService;

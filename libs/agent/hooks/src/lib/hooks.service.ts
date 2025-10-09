@@ -5,7 +5,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { SessionManagerService } from 'session-manager';
+import { SessionManagerService } from '@stock-analyzer/agent/session';
 import {
   OnMessageHook,
   OnToolUseHook,

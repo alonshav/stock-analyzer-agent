@@ -189,7 +189,7 @@ export class StreamManagerService {
             this.logger.log(`Stream connected for ${ticker}: ${data.streamId}`);
             break;
 
-          case StreamEventType.CHUNK:
+          case StreamEventType.CHUNK: {
             this.logger.log(`[CHUNK] Received chunk: ${data.content.length} chars`);
             hasReceivedContent = true;
             // Append LLM output to buffer
@@ -249,8 +249,9 @@ export class StreamManagerService {
               }
             }
             break;
+          }
 
-          case StreamEventType.TOOL:
+          case StreamEventType.TOOL: {
             // Rich tool call display with arguments
             const toolMessage = this.formatToolCall(data);
 
@@ -267,6 +268,7 @@ export class StreamManagerService {
               // Ignore if typing action fails
             }
             break;
+          }
 
           case StreamEventType.THINKING:
             // Show typing indicator for thinking blocks
@@ -277,7 +279,7 @@ export class StreamManagerService {
             }
             break;
 
-          case StreamEventType.TOOL_RESULT:
+          case StreamEventType.TOOL_RESULT: {
             // Show tool completion with inputs
             const resultMessage = this.formatToolResult(data);
             try {
@@ -286,8 +288,9 @@ export class StreamManagerService {
               this.logger.error('Failed to send tool result message:', error);
             }
             break;
+          }
 
-          case StreamEventType.PDF:
+          case StreamEventType.PDF: {
             // Receive PDF and send as document
             this.logger.log(`Received PDF for ${ticker}: ${data.fileSize} bytes, type: ${data.reportType}`);
             try {
@@ -312,8 +315,9 @@ export class StreamManagerService {
               await ctx.reply(`⚠️ PDF generated but failed to send. Size: ${Math.round(data.fileSize / 1024)}KB`);
             }
             break;
+          }
 
-          case StreamEventType.COMPLETE:
+          case StreamEventType.COMPLETE: {
             clearInterval(interventionTimer);
 
             const duration = Math.round(data.metadata.duration / 1000);
@@ -337,6 +341,7 @@ export class StreamManagerService {
 
             this.cleanup(chatId);
             break;
+          }
 
           case StreamEventType.ERROR:
             clearInterval(interventionTimer);
@@ -421,7 +426,7 @@ export class StreamManagerService {
         this.lastInterventionTimes.set(chatId, Date.now());
 
         switch (data.type) {
-          case StreamEventType.CHUNK:
+          case StreamEventType.CHUNK: {
             // Append response to buffer
             const buffer = this.streamBuffers.get(chatId) || '';
             const updatedBuffer = buffer + data.content;
@@ -463,6 +468,7 @@ export class StreamManagerService {
               }
             }
             break;
+          }
 
           case StreamEventType.THINKING:
             try {
@@ -512,7 +518,7 @@ export class StreamManagerService {
 
   private formatToolCall(data: ToolEvent): string {
     // Remove MCP prefix for cleaner display
-    let cleanToolName = data.toolName
+    const cleanToolName = data.toolName
       .replace('mcp__stock-analyzer__', '')
       .replace(/_/g, ' ')
       .split(' ')

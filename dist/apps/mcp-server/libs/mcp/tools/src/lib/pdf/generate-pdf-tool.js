@@ -22,6 +22,7 @@ __export(generate_pdf_tool_exports, {
   handleGeneratePDF: () => handleGeneratePDF
 });
 module.exports = __toCommonJS(generate_pdf_tool_exports);
+var import_types2 = require("@stock-analyzer/shared/types");
 class AnvilPDFProvider {
   constructor() {
     this.baseUrl = "https://app.useanvil.com/api/v1";
@@ -32,13 +33,6 @@ class AnvilPDFProvider {
   }
   async generatePDF(params) {
     const title = `${params.ticker} - ${params.reportType === "full" ? "Full Analysis" : "Executive Summary"}`;
-    const markdownWithHeader = `# ${title}
-
-*Generated: ${(/* @__PURE__ */ new Date()).toLocaleDateString()}*
-
----
-
-${params.content}`;
     const response = await fetch(`${this.baseUrl}/generate-pdf`, {
       method: "POST",
       headers: {
@@ -48,19 +42,28 @@ ${params.content}`;
       body: JSON.stringify({
         title,
         type: "markdown",
-        data: {
-          markdown: markdownWithHeader
-        }
+        data: [
+          {
+            heading: title,
+            content: `*Generated: ${(/* @__PURE__ */ new Date()).toLocaleDateString()}*`,
+            fontSize: 10,
+            textColor: "#6B7280"
+          },
+          {
+            content: params.content
+          }
+        ]
       })
     });
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`Anvil API error: ${response.status} - ${error}`);
     }
-    const result = await response.json();
+    const pdfBuffer = await response.arrayBuffer();
+    const pdfBase64 = Buffer.from(pdfBuffer).toString("base64");
     return {
-      downloadUrl: result.downloadURL,
-      fileId: result.eid,
+      pdfBase64,
+      fileSize: pdfBuffer.byteLength,
       provider: "anvil"
     };
   }
@@ -84,15 +87,14 @@ class PDFProviderFactory {
   }
 }
 const generatePDFTool = {
-  name: "generate_pdf",
-  description: `Generate a PDF report from markdown content using an external PDF service.
+  name: import_types2.ToolName.GENERATE_PDF,
+  description: `Generate a PDF report from markdown content using Anvil PDF API.
 
-The PDF is automatically hosted by the provider and a permanent download URL is returned.
+Returns the PDF as base64-encoded data for download/transmission.
 
 Current provider: ${process.env["PDF_PROVIDER"] || "Anvil"}
 - Free: 500 PDFs/month
-- Cost: $0.10 per PDF thereafter
-- No storage needed - fully managed`,
+- Cost: $0.10 per PDF thereafter`,
   inputSchema: {
     type: "object",
     properties: {
@@ -106,7 +108,7 @@ Current provider: ${process.env["PDF_PROVIDER"] || "Anvil"}
       },
       reportType: {
         type: "string",
-        enum: ["full", "summary"],
+        enum: [import_types2.ReportType.FULL, import_types2.ReportType.SUMMARY],
         description: 'Type of report: "full" or "summary"'
       },
       sessionId: {
@@ -130,7 +132,7 @@ async function handleGeneratePDF(params) {
       reportType: params.reportType
     });
     const duration = Date.now() - startTime;
-    console.log(`[PDF] Success in ${duration}ms: ${result.downloadUrl}`);
+    console.log(`[PDF] Success in ${duration}ms: ${result.fileSize} bytes`);
     return {
       content: [
         {
@@ -140,8 +142,8 @@ async function handleGeneratePDF(params) {
               success: true,
               ticker: params.ticker,
               reportType: params.reportType,
-              downloadUrl: result.downloadUrl,
-              fileId: result.fileId,
+              pdfBase64: result.pdfBase64,
+              fileSize: result.fileSize,
               provider: result.provider,
               generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
               durationMs: duration

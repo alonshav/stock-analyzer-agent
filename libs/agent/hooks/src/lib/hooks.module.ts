@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HooksService } from './hooks.service';
-import { SessionManagerModule } from 'session-manager';
+import { SessionManagerModule } from '@stock-analyzer/agent/session';
 
 @Module({
   imports: [SessionManagerModule],

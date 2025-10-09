@@ -27,6 +27,7 @@ var import_company_data_fetcher = require("./data-fetching/company-data-fetcher"
 var import_dcf_calculator = require("./dcf/dcf-calculator");
 var import_utils = require("@stock-analyzer/shared/utils");
 var import_generate_pdf_tool = require("./pdf/generate-pdf-tool");
+var import_types2 = require("@stock-analyzer/shared/types");
 class ToolRegistry {
   constructor(cacheManager, rateLimiter) {
     this.cacheManager = cacheManager;
@@ -40,7 +41,7 @@ class ToolRegistry {
   getTools() {
     return [
       {
-        name: "fetch_company_data",
+        name: import_types2.ToolName.FETCH_COMPANY_DATA,
         description: `Fetch essential financial data for a company in a single comprehensive call.
 
 CRITICAL: Call this tool ONLY ONCE per analysis. It returns everything you need:
@@ -67,7 +68,7 @@ DO NOT make multiple calls - all essential data is included in one response.`,
         }
       },
       {
-        name: "calculate_dcf",
+        name: import_types2.ToolName.CALCULATE_DCF,
         description: "Calculate DCF (Discounted Cash Flow) valuation using provided projections and assumptions. Returns enterprise value, equity value, and fair value per share.",
         inputSchema: {
           type: "object",
@@ -115,7 +116,7 @@ DO NOT make multiple calls - all essential data is included in one response.`,
         }
       },
       {
-        name: "test_api_connection",
+        name: import_types2.ToolName.TEST_API_CONNECTION,
         description: "Test if the FMP API key is valid and working. Returns connection status.",
         inputSchema: {
           type: "object",
@@ -130,13 +131,13 @@ DO NOT make multiple calls - all essential data is included in one response.`,
    */
   async executeTool(name, args) {
     switch (name) {
-      case "fetch_company_data":
+      case import_types2.ToolName.FETCH_COMPANY_DATA:
         return await this.handleFetchCompanyData(args);
-      case "calculate_dcf":
+      case import_types2.ToolName.CALCULATE_DCF:
         return await this.handleCalculateDCF(args);
-      case "test_api_connection":
+      case import_types2.ToolName.TEST_API_CONNECTION:
         return await this.handleTestApiConnection();
-      case "generate_pdf":
+      case import_types2.ToolName.GENERATE_PDF:
         return await (0, import_generate_pdf_tool.handleGeneratePDF)(args);
       default:
         throw new Error(`Unknown tool: ${name}`);

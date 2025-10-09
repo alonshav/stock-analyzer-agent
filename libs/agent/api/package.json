@@ -6,6 +6,12 @@
   "main": "./src/index.js",
   "types": "./src/index.d.ts",
   "dependencies": {
-    "tslib": "^2.3.0"
+    "tslib": "^2.3.0",
+    "@nestjs/common": "^11.0.0",
+    "@stock-analyzer/agent/core": "0.0.1",
+    "uuid": "^13.0.0",
+    "express": "4.21.2",
+    "@nestjs/event-emitter": "^3.0.0",
+    "@stock-analyzer/shared/types": "0.0.1"
   }
 }

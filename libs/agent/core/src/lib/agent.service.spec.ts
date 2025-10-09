@@ -8,9 +8,8 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentService } from './agent.service';
 import { MockSDKStream } from '../test-utils/mock-sdk-stream';
-import { StreamEventType } from '@stock-analyzer/shared/types';
-import { SessionManagerService } from 'session-manager';
-import { HooksService } from 'hooks';
+import { SessionManagerService } from '@stock-analyzer/agent/session';
+import { HooksService } from '@stock-analyzer/agent/hooks';
 
 // Mock the Anthropic SDK
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -160,10 +159,10 @@ describe('AgentService - Baseline Tests', () => {
       ).rejects.toThrow('ANTHROPIC_API_KEY environment variable is required');
     });
 
-    it('should initialize tool registry and MCP server', () => {
+    it('should initialize tool registry and MCP server', async () => {
       expect(service).toBeDefined();
       // Verify SDK server was created
-      const { createSdkMcpServer } = require('@anthropic-ai/claude-agent-sdk');
+      const { createSdkMcpServer } = await import('@anthropic-ai/claude-agent-sdk');
       expect(createSdkMcpServer).toHaveBeenCalled();
     });
   });
@@ -395,11 +394,9 @@ describe('AgentService - Baseline Tests', () => {
 
   describe('Error Handling', () => {
     it('should handle stream processing errors', async () => {
-      mockQuery.mockReturnValue(
-        (async function* () {
-          throw new Error('Stream error');
-        })()
-      );
+      mockQuery.mockImplementation(() => {
+        throw new Error('Stream error');
+      });
 
       await expect(
         service.analyzeStock('AAPL', 'Analyze AAPL')

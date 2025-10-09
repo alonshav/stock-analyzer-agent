@@ -23,8 +23,8 @@ import {
   DEFAULT_MAX_TURNS,
   DEFAULT_MAX_THINKING_TOKENS
 } from '@stock-analyzer/shared/types';
-import { SessionManagerService } from 'session-manager';
-import { HooksService } from 'hooks';
+import { SessionManagerService } from '@stock-analyzer/agent/session';
+import { HooksService } from '@stock-analyzer/agent/hooks';
 
 export interface AnalysisOptions {
   generatePDF?: boolean;
