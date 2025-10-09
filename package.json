@@ -13,6 +13,7 @@
     "start:telegram-bot": "node dist/apps/telegram-bot/main.js",
     "start:agent": "node dist/apps/agent/main.js",
     "start:mcp-server": "node dist/apps/mcp-server/main.js",
+    "start:all": "npm run build:agent && npm run build:telegram-bot && (npm run start:agent & npm run start:telegram-bot)",
     "dev": "nx run-many --target=serve --all --parallel",
     "test": "nx run-many --target=test --all",
     "lint": "nx run-many --target=lint --all",
