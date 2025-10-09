@@ -47,6 +47,15 @@ interface ThinkingEvent {
   timestamp: string;
 }
 
+interface ToolResultEvent {
+  type: 'tool_result';
+  ticker: string;
+  toolId: string;
+  toolName?: string;
+  toolInput?: any;
+  timestamp: string;
+}
+
 interface PDFEvent {
   type: 'pdf';
   ticker: string;
@@ -81,7 +90,7 @@ interface ConnectedEvent {
   ticker: string;
 }
 
-type StreamEvent = ChunkEvent | ToolEvent | ThinkingEvent | PDFEvent | CompleteEvent | ErrorEvent | ConnectedEvent;
+type StreamEvent = ChunkEvent | ToolEvent | ThinkingEvent | ToolResultEvent | PDFEvent | CompleteEvent | ErrorEvent | ConnectedEvent;
 
 @Injectable()
 export class StreamManagerService {
@@ -148,7 +157,9 @@ export class StreamManagerService {
 
     eventSource.onmessage = async (event: MessageEvent) => {
       try {
+        this.logger.log(`[SSE] Received event: ${event.data.substring(0, 200)}`);
         const data: StreamEvent = JSON.parse(event.data);
+        this.logger.log(`[SSE] Parsed event type: ${data.type}`);
         this.lastInterventionTimes.set(chatId, Date.now()); // Reset intervention timer on any event
 
         switch (data.type) {
@@ -157,11 +168,13 @@ export class StreamManagerService {
             break;
 
           case StreamEventType.CHUNK:
+            this.logger.log(`[CHUNK] Received chunk: ${data.content.length} chars`);
             hasReceivedContent = true;
             // Append LLM output to buffer
             const buffer = this.streamBuffers.get(chatId) || '';
             const updatedBuffer = buffer + data.content;
             this.streamBuffers.set(chatId, updatedBuffer);
+            this.logger.log(`[CHUNK] Buffer size: ${updatedBuffer.length} chars`);
             updateCounter++;
 
             // Update more frequently using TimeConstants
@@ -173,22 +186,28 @@ export class StreamManagerService {
               updateCounter = 0;
               lastUpdateTime = Date.now();
 
-              const displayText = updatedBuffer;
+              // Preserve the initial "Analyzing X..." message and append LLM content below it
+              const displayText = `Analyzing ${ticker}...\n\n${updatedBuffer}`;
+              this.logger.log(`[CHUNK] Updating Telegram message: ${displayText.length} chars, messageId: ${currentMessageId}`);
 
               try {
                 // Smart message strategy: append to existing message up to Telegram limit
                 if (displayText.length <= TelegramLimits.SAFE_MESSAGE_LENGTH) {
+                  this.logger.log(`[CHUNK] Editing existing message`);
                   await ctx.telegram.editMessageText(
                     ctx.chat!.id,
                     currentMessageId,
                     undefined,
                     displayText
                   );
+                  this.logger.log(`[CHUNK] Message edited successfully`);
                 } else {
-                  // Send new message when overflow
-                  const newMsg = await ctx.reply(displayText.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                  this.logger.log(`[CHUNK] Creating new message (overflow)`);
+
+                  // Send new message when overflow (without the header since we're continuing)
+                  const newMsg = await ctx.reply(updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
                   currentMessageId = newMsg.message_id;
-                  this.streamBuffers.set(chatId, displayText.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                  this.streamBuffers.set(chatId, updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
                 }
               } catch (error) {
                 const err = error as Error;
@@ -233,6 +252,16 @@ export class StreamManagerService {
               await ctx.sendChatAction('typing');
             } catch {
               // Ignore if typing action fails
+            }
+            break;
+
+          case StreamEventType.TOOL_RESULT:
+            // Show tool completion with inputs
+            const resultMessage = this.formatToolResult(data);
+            try {
+              await ctx.reply(resultMessage);
+            } catch (error) {
+              this.logger.error('Failed to send tool result message:', error);
             }
             break;
 
@@ -390,5 +419,54 @@ export class StreamManagerService {
     const label = ReportTypeLabel[reportType as ReportType] || reportType;
 
     return `📄 Generating ${label} PDF report for ${ticker}...`;
+  }
+
+  private formatToolResult(data: ToolResultEvent): string {
+    if (!data.toolName) {
+      return '✅ Tool completed successfully';
+    }
+
+    const input = data.toolInput || {};
+    this.logger.log(`[TOOL_RESULT] Formatting result for ${data.toolName}, input: ${JSON.stringify(input)}`);
+
+    if (isToolName(data.toolName, ToolName.FETCH_COMPANY_DATA)) {
+      const dataTypes = input.dataTypes || [];
+      const period = input.period || PeriodType.QUARTERLY;
+      const limit = input.limit || 4;
+
+      this.logger.log(`[TOOL_RESULT] dataTypes: ${JSON.stringify(dataTypes)}, period: ${period}, limit: ${limit}`);
+
+      let message = `✅ Financial data retrieved successfully!\n\n`;
+
+      if (dataTypes.length > 0) {
+        const typeLabels = dataTypes.map((type: string) => {
+          return FinancialDataTypeLabel[type as FinancialDataType] || type;
+        });
+        message += `📊 Data fetched:\n`;
+        typeLabels.forEach((label: string) => {
+          message += `  • ${label}\n`;
+        });
+      }
+
+      message += `\n⏱️ Period: ${period === PeriodType.QUARTERLY ? 'Last ' + limit + ' quarters' : 'Last ' + limit + ' years'}\n\n`;
+      message += `⏰ Analysis may take 1-2 minutes. Please wait...`;
+
+      return message;
+    } else if (isToolName(data.toolName, ToolName.CALCULATE_DCF)) {
+      const projectionYears = input.projectionYears || 5;
+      const discountRate = input.discountRate || 0.10;
+
+      return `✅ DCF valuation completed!\n\n` +
+             `📈 Parameters:\n` +
+             `  • Projection: ${projectionYears} years\n` +
+             `  • Discount rate: ${(discountRate * 100).toFixed(1)}%`;
+    } else if (isToolName(data.toolName, ToolName.GENERATE_PDF)) {
+      const reportType = input.reportType || ReportType.SUMMARY;
+      const label = ReportTypeLabel[reportType as ReportType] || reportType;
+
+      return `✅ ${label} PDF generated successfully!`;
+    } else {
+      return '✅ Tool completed successfully';
+    }
   }
 }

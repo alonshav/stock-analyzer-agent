@@ -224,6 +224,7 @@ export class AgentService {
 
       let messageCount = 0;
       let pendingPDFToolId: string | undefined;
+      const toolInputMap = new Map<string, any>(); // Track tool inputs by tool ID
 
       for await (const message of stream) {
         try {
@@ -259,6 +260,12 @@ export class AgentService {
                 } else if (block.type === 'tool_use') {
                   this.logger.log(`[STREAM] Tool use block: name=${block.name}, id=${block.id}`);
 
+                  // Store tool input for later use in TOOL_RESULT
+                  toolInputMap.set(block.id, {
+                    name: block.name,
+                    input: block.input
+                  });
+
                   // Track PDF tool calls using enum helper
                   if (isToolName(block.name, ToolName.GENERATE_PDF)) {
                     pendingPDFToolId = block.id;
@@ -284,7 +291,6 @@ export class AgentService {
               this.logger.log(`[STREAM] Emitting chunk: ${content.length} chars`);
               this.eventEmitter.emit(createEventName(StreamEventType.CHUNK, sessionId), {
                 ticker,
-                type: 'text',
                 content,
                 phase,
                 timestamp: new Date().toISOString(),
@@ -295,42 +301,58 @@ export class AgentService {
             this.logger.log(`[STREAM] Total content so far: ${fullContent.length} chars`);
           }
           // Handle user messages (tool results)
-          else if (message.type === 'user' && pendingPDFToolId) {
+          else if (message.type === 'user') {
             const apiMessage = message.message;
             this.logger.log(`[STREAM] User message (tool result) with ${apiMessage.content?.length || 0} blocks`);
 
             if (Array.isArray(apiMessage.content)) {
               for (const block of apiMessage.content) {
-                // Check for tool_result blocks matching our PDF tool
-                if (block.type === 'tool_result' && block.tool_use_id === pendingPDFToolId) {
-                  this.logger.log(`[PDF] Found tool result for PDF tool: ${pendingPDFToolId}`);
+                if (block.type === 'tool_result') {
+                  this.logger.log(`[TOOL_RESULT] Found tool result: ${block.tool_use_id}`);
 
-                  try {
-                    // Extract PDF data from tool result content
-                    if (Array.isArray(block.content)) {
-                      for (const resultBlock of block.content) {
-                        if (resultBlock.type === 'text') {
-                          const pdfData = JSON.parse(resultBlock.text);
+                  // Emit generic TOOL_RESULT event for all tools
+                  if (sessionId) {
+                    const toolInfo = toolInputMap.get(block.tool_use_id);
+                    this.eventEmitter.emit(createEventName(StreamEventType.TOOL_RESULT, sessionId), {
+                      ticker,
+                      toolId: block.tool_use_id,
+                      toolName: toolInfo?.name,
+                      toolInput: toolInfo?.input,
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
 
-                          if (pdfData.success && pdfData.pdfBase64 && sessionId) {
-                            this.logger.log(`[PDF] Emitting PDF event for session ${sessionId}`);
-                            this.eventEmitter.emit(createEventName(StreamEventType.PDF, sessionId), {
-                              ticker: pdfData.ticker,
-                              pdfBase64: pdfData.pdfBase64,
-                              fileSize: pdfData.fileSize,
-                              reportType: pdfData.reportType,
-                              timestamp: new Date().toISOString(),
-                            });
+                  // Special handling for PDF tool
+                  if (pendingPDFToolId && block.tool_use_id === pendingPDFToolId) {
+                    this.logger.log(`[PDF] Found tool result for PDF tool: ${pendingPDFToolId}`);
+
+                    try {
+                      // Extract PDF data from tool result content
+                      if (Array.isArray(block.content)) {
+                        for (const resultBlock of block.content) {
+                          if (resultBlock.type === 'text') {
+                            const pdfData = JSON.parse(resultBlock.text);
+
+                            if (pdfData.success && pdfData.pdfBase64 && sessionId) {
+                              this.logger.log(`[PDF] Emitting PDF event for session ${sessionId}`);
+                              this.eventEmitter.emit(createEventName(StreamEventType.PDF, sessionId), {
+                                ticker: pdfData.ticker,
+                                pdfBase64: pdfData.pdfBase64,
+                                fileSize: pdfData.fileSize,
+                                reportType: pdfData.reportType,
+                                timestamp: new Date().toISOString(),
+                              });
+                            }
                           }
                         }
                       }
+                    } catch (parseError) {
+                      this.logger.error('[PDF] Failed to parse PDF tool result:', parseError);
                     }
-                  } catch (parseError) {
-                    this.logger.error('[PDF] Failed to parse PDF tool result:', parseError);
-                  }
 
-                  // Clear pending PDF tracking
-                  pendingPDFToolId = undefined;
+                    // Clear pending PDF tracking
+                    pendingPDFToolId = undefined;
+                  }
                 }
               }
             }

@@ -82,6 +82,7 @@ export enum StreamEventType {
   CHUNK = 'chunk',
   THINKING = 'thinking',
   TOOL = 'tool',
+  TOOL_RESULT = 'tool_result',
   PDF = 'pdf',
   COMPLETE = 'complete',
   ERROR = 'error',

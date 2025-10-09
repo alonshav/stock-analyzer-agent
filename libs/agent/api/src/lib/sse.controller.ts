@@ -76,6 +76,14 @@ export class SSEController {
         res.write(`data: ${JSON.stringify(thinkingResponse)}\n\n`);
       };
 
+      const toolResultListener = (data: any) => {
+        const toolResultResponse: StreamResponse = {
+          type: StreamEventType.TOOL_RESULT,
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(toolResultResponse)}\n\n`);
+      };
+
       const pdfListener = (data: any) => {
         const pdfResponse: StreamResponse = {
           type: StreamEventType.PDF,
@@ -109,6 +117,7 @@ export class SSEController {
       this.eventEmitter.on(createEventName(StreamEventType.CHUNK, streamId), chunkListener);
       this.eventEmitter.on(createEventName(StreamEventType.TOOL, streamId), toolListener);
       this.eventEmitter.on(createEventName(StreamEventType.THINKING, streamId), thinkingListener);
+      this.eventEmitter.on(createEventName(StreamEventType.TOOL_RESULT, streamId), toolResultListener);
       this.eventEmitter.on(createEventName(StreamEventType.PDF, streamId), pdfListener);
       this.eventEmitter.on(createEventName(StreamEventType.COMPLETE, streamId), completeListener);
       this.eventEmitter.on(createEventName(StreamEventType.ERROR, streamId), errorListener);
@@ -119,6 +128,7 @@ export class SSEController {
         this.eventEmitter.removeListener(createEventName(StreamEventType.CHUNK, streamId), chunkListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.TOOL, streamId), toolListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.THINKING, streamId), thinkingListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.TOOL_RESULT, streamId), toolResultListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.PDF, streamId), pdfListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.COMPLETE, streamId), completeListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.ERROR, streamId), errorListener);
