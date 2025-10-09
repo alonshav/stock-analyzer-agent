@@ -118,7 +118,13 @@ export class AgentService {
     };
 
     if (sessionId) {
-      this.eventEmitter.emit(`analysis.complete.${sessionId}`, result);
+      // For SSE streaming: don't send executiveSummary again (already streamed as chunks)
+      // Send completion signal with metadata only
+      this.eventEmitter.emit(`analysis.complete.${sessionId}`, {
+        ticker,
+        timestamp: result.timestamp,
+        metadata: result.metadata,
+      });
     }
 
     this.logger.log(`Analysis complete for ${ticker} (${duration}ms)`);

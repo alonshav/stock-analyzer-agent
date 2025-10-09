@@ -79,9 +79,8 @@ export class SSEController {
         const completeResponse: StreamResponse = {
           type: 'complete',
           ticker: data.ticker,
-          ...(data.fullAnalysis && { fullAnalysis: data.fullAnalysis }),
-          executiveSummary: data.executiveSummary,
           metadata: data.metadata,
+          // Don't send executiveSummary - already streamed as chunks
         };
         res.write(`data: ${JSON.stringify(completeResponse)}\n\n`);
         res.end();
