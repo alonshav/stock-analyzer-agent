@@ -210,33 +210,52 @@ export class AgentService {
       for await (const message of stream) {
         try {
           messageCount++;
-          this.logger.debug(`Stream message #${messageCount}: ${message.type}`);
+          this.logger.log(`[STREAM] Message #${messageCount}: type=${message.type}`);
 
           // Handle assistant messages
           if (message.type === 'assistant') {
             const apiMessage = message.message;
             let content = '';
 
+            this.logger.log(`[STREAM] Assistant message with ${apiMessage.content?.length || 0} blocks`);
+
             if (Array.isArray(apiMessage.content)) {
-              for (const block of apiMessage.content) {
+              for (let i = 0; i < apiMessage.content.length; i++) {
+                const block = apiMessage.content[i];
+                this.logger.log(`[STREAM] Block ${i + 1}/${apiMessage.content.length}: type=${block.type}`);
+
                 if (block.type === 'text') {
                   content += block.text;
-                  this.logger.debug(`Text content: ${block.text.length} chars`);
-                } else if (block.type === 'tool_use' && sessionId) {
-                  // Emit tool use event
-                  this.eventEmitter.emit(`analysis.tool.${sessionId}`, {
-                    ticker,
-                    toolName: block.name,
-                    toolId: block.id,
-                    timestamp: new Date().toISOString(),
-                  });
-                  this.logger.debug(`Tool use: ${block.name} (${block.id})`);
+                  this.logger.log(`[STREAM] Text block: ${block.text.length} chars, first 100: ${block.text.substring(0, 100)}`);
+                } else if (block.type === 'thinking') {
+                  // Emit thinking progress to show the agent is working
+                  if (sessionId) {
+                    this.eventEmitter.emit(`analysis.thinking.${sessionId}`, {
+                      ticker,
+                      type: 'thinking',
+                      message: 'Analyzing data...',
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
+                  this.logger.log(`[STREAM] Thinking block received`);
+                } else if (block.type === 'tool_use') {
+                  this.logger.log(`[STREAM] Tool use block: name=${block.name}, id=${block.id}`);
+                  if (sessionId) {
+                    // Emit tool use event
+                    this.eventEmitter.emit(`analysis.tool.${sessionId}`, {
+                      ticker,
+                      toolName: block.name,
+                      toolId: block.id,
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
                 }
               }
             }
 
             // Emit text content
             if (sessionId && content) {
+              this.logger.log(`[STREAM] Emitting chunk: ${content.length} chars`);
               this.eventEmitter.emit(`analysis.chunk.${sessionId}`, {
                 ticker,
                 type: 'text',
@@ -247,9 +266,12 @@ export class AgentService {
             }
 
             fullContent += content;
+            this.logger.log(`[STREAM] Total content so far: ${fullContent.length} chars`);
+          } else {
+            this.logger.log(`[STREAM] Non-assistant message type: ${message.type}`);
           }
         } catch (messageError) {
-          this.logger.error(`Error processing stream message #${messageCount}:`, messageError);
+          this.logger.error(`[STREAM] Error processing message #${messageCount}:`, messageError);
           // Continue processing other messages
         }
       }

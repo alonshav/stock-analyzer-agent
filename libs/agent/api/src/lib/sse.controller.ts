@@ -67,6 +67,14 @@ export class SSEController {
         res.write(`data: ${JSON.stringify(toolResponse)}\n\n`);
       };
 
+      const thinkingListener = (data: any) => {
+        const thinkingResponse: StreamResponse = {
+          type: 'thinking',
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(thinkingResponse)}\n\n`);
+      };
+
       const completeListener = (data: any) => {
         const completeResponse: StreamResponse = {
           type: 'complete',
@@ -92,6 +100,7 @@ export class SSEController {
       // Register event listeners
       this.eventEmitter.on(`analysis.chunk.${streamId}`, chunkListener);
       this.eventEmitter.on(`analysis.tool.${streamId}`, toolListener);
+      this.eventEmitter.on(`analysis.thinking.${streamId}`, thinkingListener);
       this.eventEmitter.on(`analysis.complete.${streamId}`, completeListener);
       this.eventEmitter.on(`analysis.error.${streamId}`, errorListener);
 
@@ -100,6 +109,7 @@ export class SSEController {
         this.logger.log(`Client disconnected: ${ticker}`);
         this.eventEmitter.removeListener(`analysis.chunk.${streamId}`, chunkListener);
         this.eventEmitter.removeListener(`analysis.tool.${streamId}`, toolListener);
+        this.eventEmitter.removeListener(`analysis.thinking.${streamId}`, thinkingListener);
         this.eventEmitter.removeListener(`analysis.complete.${streamId}`, completeListener);
         this.eventEmitter.removeListener(`analysis.error.${streamId}`, errorListener);
         this.streamService.endSession(streamId);
