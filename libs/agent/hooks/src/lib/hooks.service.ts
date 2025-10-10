@@ -36,8 +36,10 @@ export class HooksService {
    */
   createOnMessageHook(sessionId: string, chatId: string): OnMessageHook {
     return (message: SDKMessage) => {
-      // Log all message types
-      this.logger.debug(`[${sessionId}] Message: ${message.type}`);
+      // Log non-stream_event messages (stream_event is too verbose)
+      if (message.type !== 'stream_event') {
+        this.logger.debug(`[${sessionId}] Message: ${message.type}`);
+      }
 
       // Track token usage
       if (message.type === 'assistant' && message.usage) {

@@ -1,10 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Telegraf, Context } from 'telegraf';
 import { StreamManagerService } from './stream-manager.service';
 
 @Injectable()
-export class TelegramBotService implements OnModuleInit {
+export class TelegramBotService implements OnApplicationBootstrap {
   private bot: Telegraf;
   private readonly logger = new Logger(TelegramBotService.name);
   private readonly agentUrl: string;
@@ -31,12 +31,15 @@ export class TelegramBotService implements OnModuleInit {
     return this.bot;
   }
 
-  async onModuleInit() {
+  async onApplicationBootstrap() {
     await this.setupBot();
 
     if (!this.webhookEnabled) {
-      await this.bot.launch();
-      this.logger.log('Bot started in polling mode');
+      this.logger.log('Starting bot in polling mode...');
+      this.bot.launch().catch((error) => {
+        this.logger.error('❌ Failed to start bot:', error);
+      });
+      this.logger.log('✅ Bot launched in polling mode');
     } else {
       await this.setupWebhook();
     }

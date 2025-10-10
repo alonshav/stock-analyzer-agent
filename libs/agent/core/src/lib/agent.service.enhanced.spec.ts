@@ -275,17 +275,16 @@ describe('AgentService - Enhanced Features', () => {
       expect(sessionManager.stopSession).toHaveBeenCalledWith('chat123');
     });
 
-    it('should use default chatId for legacy calls', async () => {
+    it('should pass chatId to createSession', async () => {
       mockQuery.mockReturnValue(
         MockSDKStream.createStream([
           MockSDKStream.createAssistantMessage('Analysis'),
         ])
       );
 
-      // Legacy signature: analyzeStock(ticker, userPrompt)
-      await service.analyzeStock('AAPL', 'Analyze stock');
+      await service.analyzeStock('chat123', 'AAPL', 'Analyze stock');
 
-      expect(sessionManager.createSession).toHaveBeenCalledWith('default', 'AAPL');
+      expect(sessionManager.createSession).toHaveBeenCalledWith('chat123', 'AAPL');
     });
   });
 
@@ -344,7 +343,7 @@ describe('AgentService - Enhanced Features', () => {
         })()
       );
 
-      await service.analyzeStock('AAPL', 'Analyze', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.result.${sessionId}`,
@@ -373,7 +372,7 @@ describe('AgentService - Enhanced Features', () => {
         })()
       );
 
-      await service.analyzeStock('AAPL', 'Analyze', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.system.${sessionId}`,
@@ -401,7 +400,7 @@ describe('AgentService - Enhanced Features', () => {
         })()
       );
 
-      await service.analyzeStock('AAPL', 'Analyze', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.compaction.${sessionId}`,
@@ -427,7 +426,7 @@ describe('AgentService - Enhanced Features', () => {
         })()
       );
 
-      await service.analyzeStock('AAPL', 'Analyze', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.partial.${sessionId}`,
@@ -458,7 +457,7 @@ describe('AgentService - Enhanced Features', () => {
         })()
       );
 
-      await service.analyzeStock('AAPL', 'Analyze', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze', undefined, sessionId);
 
       // Verify all event types were emitted
       expect(eventEmitter.emit).toHaveBeenCalledWith(
@@ -497,105 +496,11 @@ describe('AgentService - Enhanced Features', () => {
         })()
       );
 
-      await service.analyzeStock('AAPL', 'Analyze');
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze');
 
       expect(loggerSpy).toHaveBeenCalledWith(
         expect.stringContaining('Unknown message type: unknown_type')
       );
-    });
-  });
-
-  describe('Backward Compatibility', () => {
-    it('should handle legacy signature: analyzeStock(ticker, userPrompt)', async () => {
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('Analysis'),
-        ])
-      );
-
-      const result = await service.analyzeStock('AAPL', 'Analyze stock');
-
-      expect(result).toMatchObject({
-        ticker: 'AAPL',
-        executiveSummary: 'Analysis',
-      });
-      expect(sessionManager.createSession).toHaveBeenCalledWith('default', 'AAPL');
-    });
-
-    it('should handle legacy signature: analyzeStock(ticker, userPrompt, options)', async () => {
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('Analysis'),
-        ])
-      );
-
-      const result = await service.analyzeStock('AAPL', 'Analyze', {
-        generatePDF: true,
-        focusAreas: ['valuation'],
-      });
-
-      expect(result).toMatchObject({
-        ticker: 'AAPL',
-        executiveSummary: 'Analysis',
-      });
-    });
-
-    it('should handle legacy signature: analyzeStock(ticker, userPrompt, options, sessionId)', async () => {
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('Analysis'),
-        ])
-      );
-
-      const result = await service.analyzeStock(
-        'AAPL',
-        'Analyze',
-        { generatePDF: true },
-        'custom-session-id'
-      );
-
-      expect(result).toMatchObject({
-        ticker: 'AAPL',
-        executiveSummary: 'Analysis',
-      });
-    });
-
-    it('should handle new signature: analyzeStock(chatId, ticker, userPrompt)', async () => {
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('Analysis'),
-        ])
-      );
-
-      const result = await service.analyzeStock('chat123', 'AAPL', 'Analyze stock');
-
-      expect(result).toMatchObject({
-        ticker: 'AAPL',
-        executiveSummary: 'Analysis',
-      });
-      expect(sessionManager.createSession).toHaveBeenCalledWith('chat123', 'AAPL');
-    });
-
-    it('should handle new signature: analyzeStock(chatId, ticker, userPrompt, options, sessionId)', async () => {
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('Analysis'),
-        ])
-      );
-
-      const result = await service.analyzeStock(
-        'chat123',
-        'AAPL',
-        'Analyze',
-        { generatePDF: true },
-        'session-456'
-      );
-
-      expect(result).toMatchObject({
-        ticker: 'AAPL',
-        executiveSummary: 'Analysis',
-      });
-      expect(sessionManager.createSession).toHaveBeenCalledWith('chat123', 'AAPL');
     });
   });
 
@@ -612,7 +517,7 @@ describe('AgentService - Enhanced Features', () => {
         })()
       );
 
-      const result = await service.analyzeStock('AAPL', 'Analyze', undefined, 'session-123');
+      const result = await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze', undefined, 'session-123');
 
       expect(result.executiveSummary).toContain('Valid content');
       expect(loggerSpy).toHaveBeenCalledWith(
@@ -635,7 +540,7 @@ describe('AgentService - Enhanced Features', () => {
       );
 
       // Analysis should complete despite hook errors (hooks failures are logged, not thrown)
-      const result = await service.analyzeStock('AAPL', 'Analyze');
+      const result = await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze');
 
       expect(result).toMatchObject({
         ticker: 'AAPL',

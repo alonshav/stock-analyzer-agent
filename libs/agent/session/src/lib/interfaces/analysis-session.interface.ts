@@ -3,8 +3,20 @@
  * Represents a single stock analysis session with conversation history
  */
 
+export enum SessionStatus {
+  ACTIVE = 'active',
+  COMPLETED = 'completed',
+  STOPPED = 'stopped',
+  EXPIRED = 'expired',
+}
+
+export enum MessageRole {
+  USER = 'user',
+  ASSISTANT = 'assistant',
+}
+
 export interface ConversationMessage {
-  role: 'user' | 'assistant';
+  role: MessageRole;
   content: string;
   timestamp: Date;
 }
@@ -13,7 +25,7 @@ export interface AnalysisSession {
   sessionId: string;           // Unique ID: "AAPL-1234567890"
   ticker: string;              // Stock ticker: "AAPL"
   chatId: string;              // Telegram chat ID
-  status: 'active' | 'completed' | 'stopped' | 'expired';
+  status: SessionStatus;
 
   // Timestamps
   startedAt: Date;

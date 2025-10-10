@@ -144,6 +144,7 @@ export class StreamManagerService {
     let lastUpdateTime = Date.now();
     let updateCounter = 0;
     let hasReceivedContent = false;
+    let pdfReceived = false;
 
     // Time-based intervention messages
     const interventionTimer = setInterval(async () => {
@@ -271,11 +272,13 @@ export class StreamManagerService {
           }
 
           case StreamEventType.THINKING:
-            // Show typing indicator for thinking blocks
+            // Show "💭 Thinking..." message for thinking blocks
             try {
+              await ctx.reply('💭 Thinking...');
               await ctx.sendChatAction('typing');
-            } catch {
-              // Ignore if typing action fails
+            } catch (error) {
+              this.logger.error('Failed to send thinking message:', error);
+              // Ignore if message fails
             }
             break;
 
@@ -293,6 +296,8 @@ export class StreamManagerService {
           case StreamEventType.PDF: {
             // Receive PDF and send as document
             this.logger.log(`Received PDF for ${ticker}: ${data.fileSize} bytes, type: ${data.reportType}`);
+            pdfReceived = true;
+
             try {
               const pdfBuffer = Buffer.from(data.pdfBase64, 'base64');
               const filename = `${ticker}_${data.reportType}_analysis.pdf`;
@@ -328,8 +333,17 @@ export class StreamManagerService {
               session.status = 'completed';
             }
 
-            // Only send completion metadata if we have content
-            if (hasReceivedContent) {
+            // Send completion message
+            // If PDF was received, just say analysis is complete
+            // If text content was received (conversation mode), show details
+            if (pdfReceived) {
+              await ctx.reply(
+                `✅ Analysis complete!\n\n` +
+                `⏱️ Duration: ${duration}s\n` +
+                `📄 PDF report sent above\n\n` +
+                `💬 You can now ask follow-up questions!`
+              );
+            } else if (hasReceivedContent) {
               await ctx.reply(
                 `✅ Analysis complete!\n\n` +
                 `⏱️ Duration: ${duration}s\n` +
@@ -357,8 +371,16 @@ export class StreamManagerService {
     eventSource.onerror = async (error: any) => {
       this.logger.error('SSE error:', error);
       clearInterval(interventionTimer);
+
+      // Only show error message if the stream was not properly completed
       if (eventSource.readyState === EventSource.CLOSED) {
-        await ctx.reply('❌ Connection lost. Please try again if needed.');
+        const session = this.activeSessions.get(chatId);
+
+        // Don't show error if session completed successfully
+        if (session?.status !== 'completed') {
+          await ctx.reply('❌ Connection lost. Please try again if needed.');
+        }
+
         this.cleanup(chatId);
       }
     };
@@ -404,7 +426,7 @@ export class StreamManagerService {
     const { chatId, message, ctx, messageId, agentUrl } = config;
 
     // Connect to Agent's conversation endpoint
-    const conversationUrl = `${agentUrl}/api/conversation/${chatId}/stream`;
+    const conversationUrl = `${agentUrl}/api/analyze/conversation/${chatId}/stream`;
     const params = new URLSearchParams({
       message,
       userId: ctx.from?.id.toString() || 'anonymous',

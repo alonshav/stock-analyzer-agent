@@ -4,7 +4,7 @@
  */
 
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { AnalysisSession, ConversationMessage } from './interfaces/analysis-session.interface';
+import { AnalysisSession, ConversationMessage, SessionStatus, MessageRole } from './interfaces/analysis-session.interface';
 
 @Injectable()
 export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
@@ -42,7 +42,7 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
       sessionId,
       ticker,
       chatId,
-      status: 'active',
+      status: SessionStatus.ACTIVE,
       startedAt: now,
       lastActivity: now,
       expiresAt: new Date(now.getTime() + this.SESSION_TIMEOUT),
@@ -72,6 +72,7 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get the active session for a chat
+   * Returns ONLY sessions with status 'active' (not expired)
    */
   getActiveSession(chatId: string): AnalysisSession | null {
     const chatSessions = this.sessions.get(chatId);
@@ -80,31 +81,51 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     // Find most recent active session that hasn't expired
     const activeSession = [...chatSessions]
       .reverse()
-      .find(s => s.status === 'active' && s.expiresAt > new Date());
+      .find(s => s.status === SessionStatus.ACTIVE && s.expiresAt > new Date());
 
     return activeSession || null;
   }
 
   /**
-   * Get recent completed sessions for comparison
+   * Get the most recent completed session for a chat
+   * Returns ONLY sessions with status 'completed' (not expired)
+   */
+  getCompletedSession(chatId: string): AnalysisSession | null {
+    const chatSessions = this.sessions.get(chatId);
+    if (!chatSessions) return null;
+
+    // Find most recent completed session that hasn't expired
+    const completedSession = [...chatSessions]
+      .reverse()
+      .find(s => s.status === SessionStatus.COMPLETED && s.expiresAt > new Date());
+
+    return completedSession || null;
+  }
+
+  /**
+   * Get recent sessions (ACTIVE + COMPLETED) for comparison/context
    */
   getRecentSessions(chatId: string, limit = 5): AnalysisSession[] {
     const chatSessions = this.sessions.get(chatId);
     if (!chatSessions) return [];
 
     return chatSessions
-      .filter(s => s.status === 'completed')
+      .filter(s =>
+        (s.status === SessionStatus.ACTIVE || s.status === SessionStatus.COMPLETED) &&
+        s.expiresAt > new Date()
+      )
       .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
       .slice(0, limit);
   }
 
   /**
    * Add a message to the conversation history
+   * Works with both ACTIVE and COMPLETED sessions
    */
-  addMessage(chatId: string, role: 'user' | 'assistant', content: string): void {
-    const session = this.getActiveSession(chatId);
+  addMessage(chatId: string, role: MessageRole, content: string): void {
+    const session = this.getActiveSession(chatId) || this.getCompletedSession(chatId);
     if (!session) {
-      throw new Error(`No active session for chat ${chatId}`);
+      throw new Error(`No active or completed session for chat ${chatId}`);
     }
 
     session.conversationHistory.push({
@@ -119,16 +140,18 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Add a metric value to the session
+   * Works with both ACTIVE and COMPLETED sessions
    */
   addMetric(chatId: string, metric: keyof AnalysisSession['metrics'], value: number): void {
-    const session = this.getActiveSession(chatId);
+    const session = this.getActiveSession(chatId) || this.getCompletedSession(chatId);
     if (!session) return; // Silently ignore if no session
 
     session.metrics[metric] += value;
   }
 
   /**
-   * Mark session as completed and save results
+   * Save analysis results and mark session as COMPLETED
+   * COMPLETED sessions can still be used for conversation
    */
   completeSession(chatId: string, fullAnalysis: string, executiveSummary: string): void {
     const session = this.getActiveSession(chatId);
@@ -136,12 +159,13 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
       throw new Error(`No active session for chat ${chatId}`);
     }
 
-    session.status = 'completed';
+    // Save results and mark as COMPLETED
+    session.status = SessionStatus.COMPLETED;
     session.fullAnalysis = fullAnalysis;
     session.executiveSummary = executiveSummary;
     session.completedAt = new Date();
 
-    this.logger.log(`Completed session ${session.sessionId}`);
+    this.logger.log(`Completed session ${session.sessionId} (status: COMPLETED, available for conversation)`);
   }
 
   /**
@@ -151,18 +175,19 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     const session = this.getActiveSession(chatId);
     if (!session) return false;
 
-    session.status = 'stopped';
+    session.status = SessionStatus.STOPPED;
     this.logger.log(`Stopped session ${session.sessionId}`);
     return true;
   }
 
   /**
    * Build context prompt from session history
+   * Works with both ACTIVE and COMPLETED sessions
    */
   buildContextPrompt(chatId: string, newMessage: string): string {
-    const activeSession = this.getActiveSession(chatId);
+    const activeSession = this.getActiveSession(chatId) || this.getCompletedSession(chatId);
     if (!activeSession) {
-      throw new Error(`No active session for chat ${chatId}`);
+      throw new Error(`No active or completed session for chat ${chatId}`);
     }
 
     const recentSessions = this.getRecentSessions(chatId, 5);
@@ -194,6 +219,8 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Clean up expired sessions
+   * Only expires COMPLETED sessions (not ACTIVE ones)
+   * ACTIVE sessions stay until user stops them or they become COMPLETED
    */
   cleanupExpiredSessions(): void {
     const now = new Date();
@@ -201,12 +228,13 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
 
     for (const [chatId, sessions] of this.sessions.entries()) {
       const validSessions = sessions.filter(s => {
-        if (s.status === 'active' && s.expiresAt < now) {
-          s.status = 'expired';
+        // Only expire COMPLETED sessions that have timed out
+        if (s.status === SessionStatus.COMPLETED && s.expiresAt < now) {
+          s.status = SessionStatus.EXPIRED;
           cleaned++;
-          return false;
+          return false; // Remove from list
         }
-        return true;
+        return true; // Keep session
       });
 
       if (validSessions.length === 0) {
@@ -217,7 +245,7 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (cleaned > 0) {
-      this.logger.log(`Cleaned up ${cleaned} expired sessions`);
+      this.logger.log(`Cleaned up ${cleaned} expired COMPLETED sessions`);
     }
   }
 }

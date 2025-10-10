@@ -4,6 +4,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { SessionManagerService } from './session-manager.service';
+import { SessionStatus, MessageRole } from './interfaces/analysis-session.interface';
 
 describe('SessionManagerService', () => {
   let service: SessionManagerService;
@@ -26,7 +27,7 @@ describe('SessionManagerService', () => {
       expect(session.sessionId).toMatch(/^AAPL-\d+$/);
       expect(session.ticker).toBe('AAPL');
       expect(session.chatId).toBe('chat1');
-      expect(session.status).toBe('active');
+      expect(session.status).toBe(SessionStatus.ACTIVE);
     });
 
     it('should set expiration to 1 hour from now', () => {
@@ -89,13 +90,13 @@ describe('SessionManagerService', () => {
       expect(retrieved).toBeNull();
     });
 
-    it('should return null for completed sessions', () => {
+    it('should return null after completeSession (status changed to COMPLETED)', () => {
       service.createSession('chat1', 'AAPL');
       service.completeSession('chat1', 'Full analysis', 'Summary');
 
       const retrieved = service.getActiveSession('chat1');
 
-      expect(retrieved).toBeNull();
+      expect(retrieved).toBeNull(); // getActiveSession() only returns ACTIVE
     });
 
     it('should return null for stopped sessions', () => {
@@ -108,32 +109,77 @@ describe('SessionManagerService', () => {
     });
   });
 
+  describe('getCompletedSession', () => {
+    it('should return completed session for chatId', () => {
+      const created = service.createSession('chat1', 'AAPL');
+      service.completeSession('chat1', 'Full', 'Summary');
+
+      const retrieved = service.getCompletedSession('chat1');
+
+      expect(retrieved).not.toBeNull();
+      expect(retrieved!.sessionId).toBe(created.sessionId);
+      expect(retrieved!.status).toBe(SessionStatus.COMPLETED);
+    });
+
+    it('should return null when no completed session exists', () => {
+      service.createSession('chat1', 'AAPL'); // ACTIVE, not completed
+
+      const retrieved = service.getCompletedSession('chat1');
+
+      expect(retrieved).toBeNull();
+    });
+
+    it('should return null for expired completed sessions', () => {
+      service.createSession('chat1', 'AAPL');
+      service.completeSession('chat1', 'Full', 'Summary');
+
+      const sessions = service['sessions'].get('chat1')!;
+      sessions[0].expiresAt = new Date(Date.now() - 1000);
+
+      const retrieved = service.getCompletedSession('chat1');
+
+      expect(retrieved).toBeNull();
+    });
+
+    it('should return most recent completed session', () => {
+      service.createSession('chat1', 'AAPL');
+      service.completeSession('chat1', 'A1', 'S1');
+
+      service.createSession('chat1', 'MSFT');
+      service.completeSession('chat1', 'A2', 'S2');
+
+      const retrieved = service.getCompletedSession('chat1');
+
+      expect(retrieved!.ticker).toBe('MSFT'); // Most recent
+    });
+  });
+
   describe('addMessage', () => {
     it('should add user message to conversation history', () => {
       service.createSession('chat1', 'AAPL');
-      service.addMessage('chat1', 'user', 'What is the P/E ratio?');
+      service.addMessage('chat1', MessageRole.USER, 'What is the P/E ratio?');
 
       const session = service.getActiveSession('chat1')!;
       expect(session.conversationHistory).toHaveLength(1);
       expect(session.conversationHistory[0]).toMatchObject({
-        role: 'user',
+        role: MessageRole.USER,
         content: 'What is the P/E ratio?',
       });
     });
 
     it('should add assistant message to conversation history', () => {
       service.createSession('chat1', 'AAPL');
-      service.addMessage('chat1', 'assistant', 'The P/E ratio is 28.5');
+      service.addMessage('chat1', MessageRole.ASSISTANT, 'The P/E ratio is 28.5');
 
       const session = service.getActiveSession('chat1')!;
-      expect(session.conversationHistory[0].role).toBe('assistant');
+      expect(session.conversationHistory[0].role).toBe(MessageRole.ASSISTANT);
     });
 
     it('should update lastActivity timestamp', () => {
       service.createSession('chat1', 'AAPL');
       const beforeTime = Date.now();
 
-      service.addMessage('chat1', 'user', 'Hello');
+      service.addMessage('chat1', MessageRole.USER, 'Hello');
       const afterTime = Date.now();
 
       const session = service.getActiveSession('chat1')!;
@@ -143,14 +189,14 @@ describe('SessionManagerService', () => {
 
     it('should throw when session does not exist', () => {
       expect(() => {
-        service.addMessage('chat999', 'user', 'Hello');
+        service.addMessage('chat999', MessageRole.USER, 'Hello');
       }).toThrow('No active session');
     });
 
     it('should increment turns metric', () => {
       service.createSession('chat1', 'AAPL');
-      service.addMessage('chat1', 'user', 'Question 1');
-      service.addMessage('chat1', 'assistant', 'Answer 1');
+      service.addMessage('chat1', MessageRole.USER, 'Question 1');
+      service.addMessage('chat1', MessageRole.ASSISTANT, 'Answer 1');
 
       const session = service.getActiveSession('chat1')!;
       expect(session.metrics.turns).toBe(2);
@@ -170,8 +216,8 @@ describe('SessionManagerService', () => {
 
     it('should include conversation history', () => {
       service.createSession('chat1', 'AAPL');
-      service.addMessage('chat1', 'user', 'First question');
-      service.addMessage('chat1', 'assistant', 'First answer');
+      service.addMessage('chat1', MessageRole.USER, 'First question');
+      service.addMessage('chat1', MessageRole.ASSISTANT, 'First answer');
 
       const prompt = service.buildContextPrompt('chat1', 'Second question');
 
@@ -238,7 +284,7 @@ describe('SessionManagerService', () => {
       service.completeSession('chat1', 'Full', 'Summary');
 
       const sessions = service['sessions'].get('chat1')!;
-      expect(sessions[0].status).toBe('completed');
+      expect(sessions[0].status).toBe(SessionStatus.COMPLETED);
     });
 
     it('should set completedAt timestamp', () => {
@@ -268,7 +314,7 @@ describe('SessionManagerService', () => {
       service.stopSession('chat1');
 
       const sessions = service['sessions'].get('chat1')!;
-      expect(sessions[0].status).toBe('stopped');
+      expect(sessions[0].status).toBe(SessionStatus.STOPPED);
     });
 
     it('should return false when no active session', () => {
@@ -347,16 +393,18 @@ describe('SessionManagerService', () => {
       expect(recent).toHaveLength(3);
     });
 
-    it('should only return completed sessions', () => {
+    it('should return both ACTIVE and COMPLETED sessions', () => {
       service.createSession('chat1', 'AAPL');
-      service.completeSession('chat1', 'A', 'S');
+      service.completeSession('chat1', 'A', 'S'); // COMPLETED
 
-      service.createSession('chat1', 'MSFT'); // Active
+      service.createSession('chat1', 'MSFT'); // ACTIVE
 
       const recent = service.getRecentSessions('chat1');
 
-      expect(recent).toHaveLength(1);
-      expect(recent[0].ticker).toBe('AAPL');
+      // Returns both ACTIVE and COMPLETED
+      expect(recent).toHaveLength(2);
+      expect(recent[0].ticker).toBe('MSFT'); // Most recent (ACTIVE)
+      expect(recent[1].ticker).toBe('AAPL'); // Older (COMPLETED)
     });
 
     it('should return empty array when no sessions', () => {
@@ -386,14 +434,28 @@ describe('SessionManagerService', () => {
       expect(session).not.toBeNull();
     });
 
-    it('should mark expired active sessions as expired', () => {
+    it('should NOT expire ACTIVE sessions (only COMPLETED ones)', () => {
       const session = service.createSession('chat1', 'AAPL');
-      session.expiresAt = new Date(Date.now() - 1000);
+      session.expiresAt = new Date(Date.now() - 1000); // Expired time but still ACTIVE
 
       service.cleanupExpiredSessions();
 
       const sessions = service['sessions'].get('chat1');
-      expect(sessions).toBeUndefined(); // Should be removed
+      expect(sessions).toHaveLength(1); // Should NOT be removed
+      expect(sessions![0].status).toBe(SessionStatus.ACTIVE);
+    });
+
+    it('should expire COMPLETED sessions that have timed out', () => {
+      service.createSession('chat1', 'AAPL');
+      service.completeSession('chat1', 'A', 'S');
+
+      const sessions = service['sessions'].get('chat1')!;
+      sessions[0].expiresAt = new Date(Date.now() - 1000); // Expired
+
+      service.cleanupExpiredSessions();
+
+      const remainingSessions = service['sessions'].get('chat1');
+      expect(remainingSessions).toBeUndefined(); // Should be removed
     });
 
     it('should preserve non-expired sessions', () => {

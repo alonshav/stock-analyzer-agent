@@ -177,6 +177,7 @@ describe('AgentService - Baseline Tests', () => {
       );
 
       const result = await service.analyzeStock(
+        'test-chat-1',
         'AAPL',
         'Analyze AAPL stock'
       );
@@ -202,7 +203,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.chunk.${sessionId}`,
@@ -227,7 +228,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.tool.${sessionId}`,
@@ -248,7 +249,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.complete.${sessionId}`,
@@ -265,7 +266,7 @@ describe('AgentService - Baseline Tests', () => {
       });
 
       await expect(
-        service.analyzeStock('AAPL', 'Analyze AAPL')
+        service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL')
       ).rejects.toThrow('Rate limit exceeded');
     });
   });
@@ -284,6 +285,7 @@ describe('AgentService - Baseline Tests', () => {
       );
 
       const result = await service.analyzeStock(
+        'test-chat-1',
         'AAPL',
         'Analyze AAPL',
         undefined,
@@ -302,7 +304,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.thinking.${sessionId}`,
@@ -325,7 +327,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.tool.${sessionId}`,
@@ -343,7 +345,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.tool_result.${sessionId}`,
@@ -378,7 +380,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         `analysis.pdf.${sessionId}`,
@@ -399,7 +401,7 @@ describe('AgentService - Baseline Tests', () => {
       });
 
       await expect(
-        service.analyzeStock('AAPL', 'Analyze AAPL')
+        service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL')
       ).rejects.toThrow('Stream error');
     });
 
@@ -415,6 +417,7 @@ describe('AgentService - Baseline Tests', () => {
       );
 
       const result = await service.analyzeStock(
+        'test-chat-1',
         'AAPL',
         'Analyze AAPL',
         undefined,
@@ -436,7 +439,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL', undefined, sessionId);
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
 
       // Verify chunk event structure
       expect(eventEmitter.emit).toHaveBeenCalledWith(
@@ -471,7 +474,7 @@ describe('AgentService - Baseline Tests', () => {
         ])
       );
 
-      await service.analyzeStock('AAPL', 'Analyze AAPL');
+      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL');
 
       // Should not emit chunk events without sessionId
       const chunkCalls = (eventEmitter.emit as jest.Mock).mock.calls.filter(

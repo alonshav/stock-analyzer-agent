@@ -23,7 +23,7 @@ import {
   DEFAULT_MAX_TURNS,
   DEFAULT_MAX_THINKING_TOKENS
 } from '@stock-analyzer/shared/types';
-import { SessionManagerService } from '@stock-analyzer/agent/session';
+import { SessionManagerService, MessageRole } from '@stock-analyzer/agent/session';
 import { HooksService } from '@stock-analyzer/agent/hooks';
 
 export interface AnalysisOptions {
@@ -109,46 +109,19 @@ export class AgentService {
   /**
    * WORKFLOW MODE: Full Stock Analysis
    * Creates session, runs analysis with streaming
-   *
-   * Supports two signatures for backward compatibility:
-   * 1. analyzeStock(ticker, userPrompt, options?, sessionId?) - legacy
-   * 2. analyzeStock(chatId, ticker, userPrompt, options?, sessionId?) - new
    */
   async analyzeStock(
-    tickerOrChatId: string,
-    userPromptOrTicker: string,
-    optionsOrUserPrompt?: AnalysisOptions | string,
-    sessionIdOrOptions?: string | AnalysisOptions,
+    chatId: string,
+    ticker: string,
+    userPrompt: string,
+    options?: AnalysisOptions,
     sessionId?: string
   ): Promise<AnalysisResult> {
-    // Determine if using legacy signature (3-4 params) or new signature (4-5 params)
-    let chatId: string;
-    let ticker: string;
-    let userPrompt: string;
-    let options: AnalysisOptions | undefined;
-    let effectiveSessionId: string | undefined;
-
-    // Legacy signature: analyzeStock(ticker, userPrompt, options?, sessionId?)
-    if (typeof optionsOrUserPrompt !== 'string') {
-      chatId = 'default';  // Use default chatId for legacy calls
-      ticker = tickerOrChatId;
-      userPrompt = userPromptOrTicker;
-      options = optionsOrUserPrompt;
-      effectiveSessionId = typeof sessionIdOrOptions === 'string' ? sessionIdOrOptions : sessionId;
-    }
-    // New signature: analyzeStock(chatId, ticker, userPrompt, options?, sessionId?)
-    else {
-      chatId = tickerOrChatId;
-      ticker = userPromptOrTicker;
-      userPrompt = optionsOrUserPrompt;
-      options = typeof sessionIdOrOptions === 'object' ? sessionIdOrOptions : undefined;
-      effectiveSessionId = sessionId;
-    }
     const startTime = Date.now();
-
+    this.logger.log(`Starting stock analysis for ${ticker} in chat ${chatId}`);
     // Step 1: Create session
     const session = this.sessionManager.createSession(chatId, ticker);
-    const sessionIdToUse = effectiveSessionId || session.sessionId;
+    const sessionIdToUse = sessionId || session.sessionId;
 
     this.logger.log(`[${sessionIdToUse}] Starting analysis for ${ticker}`);
 
@@ -160,7 +133,7 @@ export class AgentService {
         ticker,
         prompt: userPrompt,
         phase: 'executive-summary',
-        streamToClient: !!effectiveSessionId,
+        streamToClient: !!sessionId,
       });
 
       // Step 3: Complete session
@@ -180,8 +153,8 @@ export class AgentService {
         },
       };
 
-      if (effectiveSessionId) {
-        this.eventEmitter.emit(createEventName(StreamEventType.COMPLETE, effectiveSessionId), {
+      if (sessionId) {
+        this.eventEmitter.emit(createEventName(StreamEventType.COMPLETE, sessionId), {
           ticker,
           timestamp: result.timestamp,
           metadata: result.metadata,
@@ -204,32 +177,50 @@ export class AgentService {
    */
   async handleConversation(
     chatId: string,
-    message: string
+    message: string,
+    streamId?: string
   ): Promise<string> {
-    const session = this.sessionManager.getActiveSession(chatId);
+    // Try to get ACTIVE session first, then fall back to COMPLETED
+    this.logger.log(`Handling conversation for chat ${chatId} with message: ${message.substring(0, 50)}...`);
+    const session = this.sessionManager.getActiveSession(chatId) || this.sessionManager.getCompletedSession(chatId);
 
     if (!session) {
-      throw new Error('No active session for conversation');
+      throw new Error('No active or completed session for conversation');
     }
 
-    this.logger.log(`[${session.sessionId}] Conversation: ${message.substring(0, 50)}...`);
+    const effectiveSessionId = streamId || session.sessionId;
+
+    this.logger.log(`[${effectiveSessionId}] Conversation: ${message.substring(0, 50)}...`);
 
     // Step 1: Build context from session
     const contextPrompt = this.sessionManager.buildContextPrompt(chatId, message);
 
-    // Step 2: Execute with streaming
+    // Step 2: Execute with streaming (use streamId for event emission if provided)
     const result = await this.executeQuery({
       chatId,
-      sessionId: session.sessionId,
+      sessionId: effectiveSessionId,
       ticker: session.ticker,
       prompt: contextPrompt,
       phase: 'conversation',
-      streamToClient: true,
+      streamToClient: !!streamId, // Only stream if streamId provided
     });
 
     // Step 3: Save to session
-    this.sessionManager.addMessage(chatId, 'user', message);
-    this.sessionManager.addMessage(chatId, 'assistant', result);
+    this.sessionManager.addMessage(chatId, MessageRole.USER, message);
+    this.sessionManager.addMessage(chatId, MessageRole.ASSISTANT, result);
+
+    // Step 4: Emit completion event if streamId provided
+    if (streamId) {
+      this.eventEmitter.emit(createEventName(StreamEventType.COMPLETE, streamId), {
+        ticker: session.ticker,
+        metadata: {
+          analysisDate: new Date().toISOString(),
+          framework: FRAMEWORK_VERSION,
+          model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
+          duration: 0, // Conversation is quick
+        },
+      });
+    }
 
     return result;
   }
@@ -263,6 +254,7 @@ export class AgentService {
         mcpServers: {
           'stock-analyzer': this.mcpServer,
         },
+        includePartialMessages: true,
 
         // Session-aware hooks using SDK hook events
         hooks: {
@@ -362,8 +354,9 @@ export class AgentService {
             }
           }
 
-          // Emit text content
-          if (streamToClient && content) {
+          // Emit text content ONLY for conversation mode (not for analysis)
+          // For analysis, we only want the PDF, not the raw text
+          if (streamToClient && content && phase === 'conversation') {
             this.eventEmitter.emit(createEventName(StreamEventType.CHUNK, sessionId), {
               ticker,
               content,

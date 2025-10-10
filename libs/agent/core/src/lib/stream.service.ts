@@ -45,10 +45,19 @@ export class StreamService {
 
     this.logger.log(`Started stream: ${streamId} for ${params.ticker}`);
 
+    // Extract chatId from sessionId (format: "telegram-{chatId}")
+    // This ensures the session is created with the correct chatId for conversation mode
+    const chatId = params.sessionId.startsWith('telegram-')
+      ? params.sessionId.substring('telegram-'.length)
+      : params.sessionId;
+
+    this.logger.debug(`[${streamId}] Extracted chatId: "${chatId}" from sessionId: "${params.sessionId}"`);
+
     // Start agent analysis (runs in background)
     // Agent will emit events that SSE controller listens to directly
     this.agentService
       .analyzeStock(
+        chatId,              // chatId extracted from sessionId
         params.ticker,
         params.userPrompt,
         params.options,
@@ -59,6 +68,50 @@ export class StreamService {
       })
       .catch((error) => {
         this.logger.error(`Stream error: ${error.message}`, error.stack);
+        this.eventEmitter.emit(`analysis.error.${streamId}`, {
+          message: error.message,
+          timestamp: new Date().toISOString(),
+        });
+        this.endSession(streamId);
+      });
+
+    return streamId;
+  }
+
+  async startConversationStream(params: {
+    chatId: string;
+    message: string;
+    userId: string;
+    platform: string;
+  }): Promise<string> {
+    // Create unique stream ID for conversation
+    const streamId = `conversation-${params.chatId}-${Date.now()}`;
+
+    // Create and store session metadata
+    const session: StreamSession = {
+      id: streamId,
+      ticker: params.chatId, // Use chatId as ticker for conversation mode
+      userId: params.userId,
+      platform: params.platform,
+      startTime: Date.now(),
+      active: true,
+    };
+    this.sessions.set(streamId, session);
+
+    this.logger.log(`Started conversation stream: ${streamId} for chat ${params.chatId}`);
+
+    // Start conversation handling (runs in background)
+    this.agentService
+      .handleConversation(
+        params.chatId,
+        params.message,
+        streamId // Pass streamId for event emission
+      )
+      .then(() => {
+        this.endSession(streamId);
+      })
+      .catch((error) => {
+        this.logger.error(`Conversation stream error: ${error.message}`, error.stack);
         this.eventEmitter.emit(`analysis.error.${streamId}`, {
           message: error.message,
           timestamp: new Date().toISOString(),

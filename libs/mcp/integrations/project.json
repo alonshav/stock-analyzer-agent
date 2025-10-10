@@ -4,16 +4,5 @@
   "sourceRoot": "libs/mcp/integrations/src",
   "projectType": "library",
   "tags": ["type:library", "scope:mcp"],
-  "targets": {
-    "build": {
-      "executor": "@nx/js:tsc",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "outputPath": "dist/libs/mcp/integrations",
-        "main": "libs/mcp/integrations/src/index.ts",
-        "tsConfig": "libs/mcp/integrations/tsconfig.lib.json",
-        "assets": ["libs/mcp/integrations/*.md"]
-      }
-    }
-  }
+  "targets": {}
 }

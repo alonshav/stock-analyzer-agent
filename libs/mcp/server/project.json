@@ -4,16 +4,5 @@
   "sourceRoot": "libs/mcp/server/src",
   "projectType": "library",
   "tags": ["type:library", "scope:mcp"],
-  "targets": {
-    "build": {
-      "executor": "@nx/js:tsc",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "outputPath": "dist/libs/mcp/server",
-        "main": "libs/mcp/server/src/index.ts",
-        "tsConfig": "libs/mcp/server/tsconfig.lib.json",
-        "assets": ["libs/mcp/server/*.md"]
-      }
-    }
-  }
+  "targets": {}
 }

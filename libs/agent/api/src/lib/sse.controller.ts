@@ -155,4 +155,104 @@ export class SSEController {
       timestamp: new Date().toISOString(),
     };
   }
+
+  @Get('conversation/:chatId/stream')
+  async streamConversation(
+    @Param('chatId') chatId: string,
+    @Query('message') message: string,
+    @Query('userId') userId = 'anonymous',
+    @Query('platform') platform = 'telegram',
+    @Res() res: Response,
+    @Req() req: Request
+  ) {
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
+
+    let streamId: string;
+
+    try {
+      // Use the existing stream service with chatId as sessionId
+      streamId = await this.streamService.startConversationStream({
+        chatId,
+        message,
+        userId,
+        platform,
+      });
+
+      // Send connection event
+      const connectionResponse: StreamResponse = {
+        type: StreamEventType.CONNECTED,
+        streamId,
+        ticker: chatId, // Use chatId as ticker for conversation mode
+      };
+      res.write(`data: ${JSON.stringify(connectionResponse)}\n\n`);
+
+      // Event listeners (same as analysis stream)
+      const chunkListener = (data: any) => {
+        const chunkResponse: StreamResponse = {
+          type: StreamEventType.CHUNK,
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(chunkResponse)}\n\n`);
+      };
+
+      const thinkingListener = (data: any) => {
+        const thinkingResponse: StreamResponse = {
+          type: StreamEventType.THINKING,
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(thinkingResponse)}\n\n`);
+      };
+
+      const completeListener = (data: any) => {
+        const completeResponse: StreamResponse = {
+          type: StreamEventType.COMPLETE,
+          ticker: data.ticker || chatId,
+          metadata: data.metadata,
+        };
+        res.write(`data: ${JSON.stringify(completeResponse)}\n\n`);
+        res.end();
+      };
+
+      const errorListener = (data: any) => {
+        const errorResponse: StreamResponse = {
+          type: StreamEventType.ERROR,
+          message: data.message,
+          timestamp: data.timestamp,
+        };
+        res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+        res.end();
+      };
+
+      // Register event listeners
+      this.eventEmitter.on(createEventName(StreamEventType.CHUNK, streamId), chunkListener);
+      this.eventEmitter.on(createEventName(StreamEventType.THINKING, streamId), thinkingListener);
+      this.eventEmitter.on(createEventName(StreamEventType.COMPLETE, streamId), completeListener);
+      this.eventEmitter.on(createEventName(StreamEventType.ERROR, streamId), errorListener);
+
+      // Handle client disconnect
+      req.on('close', () => {
+        this.logger.log(`Conversation client disconnected: ${chatId}`);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.CHUNK, streamId), chunkListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.THINKING, streamId), thinkingListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.COMPLETE, streamId), completeListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.ERROR, streamId), errorListener);
+        this.streamService.endSession(streamId);
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Conversation SSE error:', errorMessage);
+      const errorResponse: StreamResponse = {
+        type: StreamEventType.ERROR,
+        message: errorMessage,
+        timestamp: new Date().toISOString(),
+      };
+      res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+      res.end();
+    }
+  }
 }

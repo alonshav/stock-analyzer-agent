@@ -255,39 +255,91 @@ export class AgentService {
 
 ## Session Management & Conversation Mode
 
-The system maintains 1-hour conversational sessions enabling follow-up questions:
+The system maintains 1-hour conversational sessions enabling follow-up questions with a proper state machine:
 
-**Session Lifecycle** (`libs/agent/session/src/lib/session-manager.service.ts`):
+**Session Lifecycle States** (`libs/agent/session/src/lib/interfaces/analysis-session.interface.ts`):
 ```typescript
-// Sessions automatically created on analysis start
-const session = sessionManager.createSession(chatId, ticker);
-// Session: { sessionId, ticker, chatId, status: 'active', expiresAt: now + 1hr }
+export enum SessionStatus {
+  ACTIVE = 'active',       // Currently analyzing (before PDF delivered)
+  COMPLETED = 'completed', // Analysis done, available for conversation
+  STOPPED = 'stopped',     // User manually stopped via /stop
+  EXPIRED = 'expired',     // Timed out after 1 hour of inactivity
+}
 
-// Conversation history tracked for context
-sessionManager.addMessage(chatId, 'user', 'What is the P/E ratio?');
-sessionManager.addMessage(chatId, 'assistant', 'AAPL has P/E of 28.5...');
-
-// Context building for follow-up questions
-const contextPrompt = sessionManager.buildContextPrompt(chatId, newMessage);
-// Includes: ticker, recent analysis summary, conversation history, current question
-
-// Automatic cleanup every 5 minutes removes expired sessions
+// State transitions:
+ACTIVE → (analysis completes) → COMPLETED → (1hr timeout) → EXPIRED
+       ↘ (user /stop) → STOPPED
 ```
+
+**Session Manager Methods** (`libs/agent/session/src/lib/session-manager.service.ts`):
+```typescript
+// Create new session (ACTIVE)
+const session = sessionManager.createSession(chatId, ticker);
+
+// Get session for conversation (checks both ACTIVE and COMPLETED)
+const session = sessionManager.getActiveSession(chatId) || sessionManager.getCompletedSession(chatId);
+
+// Three separate query methods (Option 1 pattern):
+getActiveSession(chatId)      // Returns ACTIVE only
+getCompletedSession(chatId)   // Returns COMPLETED only
+getRecentSessions(chatId, 5)  // Returns ACTIVE + COMPLETED for context
+
+// Add conversation messages (works with ACTIVE or COMPLETED)
+sessionManager.addMessage(chatId, MessageRole.USER, 'What is the P/E?');
+sessionManager.addMessage(chatId, MessageRole.ASSISTANT, 'P/E is 28.5...');
+
+// Complete analysis (ACTIVE → COMPLETED)
+sessionManager.completeSession(chatId, fullAnalysis, executiveSummary);
+
+// Manual stop (ACTIVE or COMPLETED → STOPPED)
+sessionManager.stopSession(chatId);
+
+// Automatic cleanup (COMPLETED → EXPIRED after 1hr, ACTIVE sessions never auto-expire)
+// Runs every 5 minutes
+```
+
+**Critical Design Decisions**:
+1. **ACTIVE sessions never auto-expire** - only COMPLETED sessions expire after timeout
+2. **No anti-pattern methods** - `getActiveSession()` returns ACTIVE only, never COMPLETED
+3. **Explicit method calls** - Use `getActiveSession() || getCompletedSession()` pattern
+4. **Clean separation** - Each method has a single, clear purpose
 
 **Two Operating Modes**:
 
 1. **Workflow Mode** - `analyzeStock(chatId, ticker, prompt)`:
-   - Creates new session
+   - Creates new session (ACTIVE)
    - Runs full analysis (30-60s)
-   - Streams executive summary
-   - Session remains active for follow-ups
+   - Streams executive summary + PDF
+   - Calls `completeSession()` → status becomes COMPLETED
+   - Session available for follow-ups
 
 2. **Conversation Mode** - `handleConversation(chatId, message)`:
-   - Loads active session
+   - Checks `getActiveSession() || getCompletedSession()`
    - Builds context from past analysis + conversation
    - Calls Claude with full context (5-15s)
    - Streams targeted answer
    - Adds Q&A to conversation history
+
+**Real-World Flow**:
+```
+User: /analyze AAPL
+  → Session: AAPL (ACTIVE)
+  → Analysis runs, PDF delivered
+  → Session: AAPL (COMPLETED) ✓
+
+User: "What's the P/E?"
+  → getActiveSession() returns null
+  → getCompletedSession() returns AAPL ✓
+  → Conversation works!
+
+User: /analyze MSFT
+  → getActiveSession() returns null (no conflict!)
+  → Session: AAPL (COMPLETED), MSFT (ACTIVE) ✓
+
+[1 hour passes with no activity]
+  → Cleanup expires AAPL (COMPLETED → EXPIRED)
+  → MSFT stays ACTIVE (no auto-expiration) ✓
+```
 
 **Backward Compatibility**: Legacy `analyzeStock(ticker, prompt)` signature still works via overload detection.
 
