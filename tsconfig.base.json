@@ -17,7 +17,6 @@
     "paths": {
       "@stock-analyzer/agent/api": ["libs/agent/api/src/index.ts"],
       "@stock-analyzer/agent/core": ["libs/agent/core/src/index.ts"],
-      "@stock-analyzer/agent/hooks": ["libs/agent/hooks/src/index.ts"],
       "@stock-analyzer/agent/session": ["libs/agent/session/src/index.ts"],
       "@stock-analyzer/bot/common": ["libs/bot/common/src/index.ts"],
       "@stock-analyzer/bot/telegram": ["libs/bot/telegram/src/index.ts"],

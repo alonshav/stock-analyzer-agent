@@ -1,7 +1,6 @@
 /**
  * Enhanced AgentService with:
  * - Session Management
- * - Hooks Integration
  * - All 7 SDK Message Types
  * - Two Modes: Workflow + Conversation
  */
@@ -24,7 +23,6 @@ import {
   DEFAULT_MAX_THINKING_TOKENS
 } from '@stock-analyzer/shared/types';
 import { SessionManagerService, MessageRole } from '@stock-analyzer/agent/session';
-import { HooksService } from '@stock-analyzer/agent/hooks';
 
 export interface AnalysisOptions {
   generatePDF?: boolean;
@@ -55,8 +53,7 @@ export class AgentService {
   constructor(
     private config: ConfigService,
     private eventEmitter: EventEmitter2,
-    private sessionManager: SessionManagerService,
-    private hooksService: HooksService
+    private sessionManager: SessionManagerService
   ) {
     const apiKey = this.config.get<string>('ANTHROPIC_API_KEY');
     if (!apiKey) {
@@ -226,8 +223,8 @@ export class AgentService {
   }
 
   /**
-   * Core Query Executor with Integrated Systems
-   * Handles all 7 SDK message types with hooks
+   * Core Query Executor
+   * Handles all 7 SDK message types with debug logging
    */
   private async executeQuery(params: {
     chatId: string;
@@ -256,48 +253,25 @@ export class AgentService {
         },
         includePartialMessages: false,
 
-        // Session-aware hooks using SDK hook events
+        // Basic debug hooks for monitoring
         hooks: {
           SessionStart: [{
             hooks: [async (input: any) => {
-              this.logger.debug(`SDK SessionStart hook: ${JSON.stringify(input)}`);
+              this.logger.debug(`[${sessionId}] Session started for chat ${chatId}`);
               return { continue: true };
             }],
           }],
           PreToolUse: [{
             hooks: [async (input: any, toolUseID) => {
-              // Call our HooksService onToolUse hook for validation and tracking
-              this.logger.debug(`Pre Tool Use hook: ${JSON.stringify(input)}` + `, toolUseID: ${toolUseID}`);
-              const toolUseHook = this.hooksService.createOnToolUseHook(sessionId, chatId);
-              try {
-                toolUseHook({
-                  name: input.tool_name,
-                  input: input.tool_input,
-                });
-              } catch (error) {
-                // If hook throws (validation or budget), stop tool execution
-                this.logger.error(`PreToolUse hook error: ${error}`);
-                return { continue: false, decision: 'block' as const };
-              }
-
-              // Return continue to allow tool execution
+              this.logger.debug(`[${sessionId}] PreToolUse - tool: ${input.tool_name}, toolId: ${toolUseID}`);
+              this.logger.debug(`[${sessionId}] Tool input: ${JSON.stringify(input.tool_input)}`);
               return { continue: true };
             }],
           }],
-
           PostToolUse: [{
             hooks: [async (input: any, toolUseID) => {
-              // Call our HooksService onToolResult hook for error enhancement and caching
-              this.logger.debug(`Post Tool Use hook: ${JSON.stringify(input)}` + `, toolUseID: ${toolUseID}`);
-              const toolResultHook = this.hooksService.createOnToolResultHook(sessionId, chatId);
-              toolResultHook({
-                tool_use_id: toolUseID || '',
-                content: typeof input.tool_response === 'string'
-                  ? input.tool_response
-                  : JSON.stringify(input.tool_response),
-                is_error: input.tool_response?.isError || false,
-              })
-
+              this.logger.debug(`[${sessionId}] PostToolUse - toolId: ${toolUseID}`);
+              this.logger.debug(`[${sessionId}] Tool response type: ${typeof input.tool_response}`);
               return { continue: true };
             }],
           }],
@@ -311,17 +285,8 @@ export class AgentService {
     // Process stream with COMPLETE message type handling (all 7 types)
     for await (const message of stream) {
       this.logger.debug(`[${sessionId}] Received message of type: ${(message as any).type}`);
-      this.logger.log(`message: ${JSON.stringify(message)}`);
+      this.logger.log(`message: ${JSON.stringify(message, null, 2)}`);
       try {
-        // Track message with hooks service for session metrics
-        try {
-          const onMessageHook = this.hooksService.createOnMessageHook(sessionId, chatId);
-          onMessageHook(message as any); // Type cast due to SDK version differences
-        } catch (hookError) {
-          this.logger.warn(`[${sessionId}] onMessage hook failed:`, hookError);
-          // Continue processing - hooks are optional enhancements
-        }
-
         // 1. SDKAssistantMessage - Complete assistant response
         if (message.type === 'assistant') {
           const apiMessage = message.message;

@@ -4,7 +4,6 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AgentService } from './agent.service';
 import { StreamService } from './stream.service';
 import { SessionManagerModule } from '@stock-analyzer/agent/session';
-import { HooksModule } from '@stock-analyzer/agent/hooks';
 
 @Module({
   imports: [
@@ -19,7 +18,6 @@ import { HooksModule } from '@stock-analyzer/agent/hooks';
       verboseMemoryLeak: true,
     }),
     SessionManagerModule,
-    HooksModule,
   ],
   providers: [AgentService, StreamService],
   exports: [AgentService, StreamService],

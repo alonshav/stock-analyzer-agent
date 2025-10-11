@@ -9,7 +9,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentService } from './agent.service';
 import { MockSDKStream } from '../test-utils/mock-sdk-stream';
 import { SessionManagerService } from '@stock-analyzer/agent/session';
-import { HooksService } from '@stock-analyzer/agent/hooks';
 
 // Mock the Anthropic SDK
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -110,14 +109,6 @@ describe('AgentService - Baseline Tests', () => {
             buildContextPrompt: jest.fn(),
           },
         },
-        {
-          provide: HooksService,
-          useValue: {
-            createOnMessageHook: jest.fn(() => jest.fn()),
-            createOnToolUseHook: jest.fn(() => jest.fn()),
-            createOnToolResultHook: jest.fn(() => jest.fn()),
-          },
-        },
       ],
     }).compile();
 
@@ -149,10 +140,6 @@ describe('AgentService - Baseline Tests', () => {
             {
               provide: SessionManagerService,
               useValue: { createSession: jest.fn() },
-            },
-            {
-              provide: HooksService,
-              useValue: { createOnMessageHook: jest.fn() },
             },
           ],
         }).compile()

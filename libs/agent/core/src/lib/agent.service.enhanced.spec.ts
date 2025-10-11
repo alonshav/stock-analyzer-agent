@@ -9,7 +9,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentService } from './agent.service';
 import { MockSDKStream } from '../test-utils/mock-sdk-stream';
 import { SessionManagerService } from '@stock-analyzer/agent/session';
-import { HooksService } from '@stock-analyzer/agent/hooks';
 
 // Mock the Anthropic SDK
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -50,7 +49,6 @@ jest.mock('@stock-analyzer/mcp/tools', () => ({
 describe('AgentService - Enhanced Features', () => {
   let service: AgentService;
   let sessionManager: SessionManagerService;
-  let hooksService: HooksService;
   let eventEmitter: EventEmitter2;
   let mockQuery: jest.Mock;
 
@@ -101,20 +99,11 @@ describe('AgentService - Enhanced Features', () => {
             buildContextPrompt: jest.fn((chatId, message) => `Context: ${message}`),
           },
         },
-        {
-          provide: HooksService,
-          useValue: {
-            createOnMessageHook: jest.fn(() => jest.fn()),
-            createOnToolUseHook: jest.fn(() => jest.fn()),
-            createOnToolResultHook: jest.fn(() => jest.fn()),
-          },
-        },
       ],
     }).compile();
 
     service = module.get<AgentService>(AgentService);
     sessionManager = module.get<SessionManagerService>(SessionManagerService);
-    hooksService = module.get<HooksService>(HooksService);
     eventEmitter = module.get<EventEmitter2>(EventEmitter2);
   });
 
@@ -288,46 +277,6 @@ describe('AgentService - Enhanced Features', () => {
     });
   });
 
-  describe('Hooks Integration', () => {
-    it('should call onMessage hook for each stream message', async () => {
-      const onMessageHook = jest.fn();
-      (hooksService.createOnMessageHook as jest.Mock).mockReturnValue(onMessageHook);
-
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('Test message'),
-        ])
-      );
-
-      await service.analyzeStock('chat123', 'AAPL', 'Analyze', undefined, 'session-123');
-
-      // Verify hook was created and called for messages
-      expect(hooksService.createOnMessageHook).toHaveBeenCalledWith('session-123', 'chat123');
-      expect(onMessageHook).toHaveBeenCalled();
-    });
-
-    it('should integrate hooks into SDK query options', async () => {
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('Test'),
-        ])
-      );
-
-      await service.analyzeStock('chat123', 'AAPL', 'Analyze', undefined, 'session-123');
-
-      // Verify query was called with hooks configuration
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.objectContaining({
-          options: expect.objectContaining({
-            hooks: expect.objectContaining({
-              PreToolUse: expect.any(Array),
-              PostToolUse: expect.any(Array),
-            }),
-          }),
-        })
-      );
-    });
-  });
 
   describe('All 7 SDK Message Types', () => {
     it('should handle SDKResultMessage with metadata', async () => {
@@ -526,26 +475,5 @@ describe('AgentService - Enhanced Features', () => {
       );
     });
 
-    it('should not block analysis if hook execution fails', async () => {
-      // Make the onMessage hook throw when called
-      const throwingHook = jest.fn(() => {
-        throw new Error('Hook execution failed');
-      });
-      (hooksService.createOnMessageHook as jest.Mock).mockReturnValue(throwingHook);
-
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('Analysis complete'),
-        ])
-      );
-
-      // Analysis should complete despite hook errors (hooks failures are logged, not thrown)
-      const result = await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze');
-
-      expect(result).toMatchObject({
-        ticker: 'AAPL',
-        executiveSummary: 'Analysis complete',
-      });
-    });
   });
 });
