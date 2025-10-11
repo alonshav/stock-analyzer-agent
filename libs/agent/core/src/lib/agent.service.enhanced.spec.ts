@@ -93,6 +93,7 @@ describe('AgentService - Enhanced Features', () => {
               metrics: { tokens: 0, toolCalls: 0, turns: 0, errors: 0 },
             })),
             getActiveSession: jest.fn(),
+            getCompletedSession: jest.fn(),
             completeSession: jest.fn(),
             stopSession: jest.fn(),
             addMessage: jest.fn(),
@@ -108,12 +109,13 @@ describe('AgentService - Enhanced Features', () => {
   });
 
   describe('handleConversation()', () => {
-    it('should throw error if no active session exists', async () => {
+    it('should throw error if no active or completed session exists', async () => {
       (sessionManager.getActiveSession as jest.Mock).mockReturnValue(null);
+      (sessionManager.getCompletedSession as jest.Mock).mockReturnValue(null);
 
       await expect(
         service.handleConversation('chat123', 'What is the P/E ratio?')
-      ).rejects.toThrow('No active session for conversation');
+      ).rejects.toThrow('No active or completed session for conversation');
     });
 
     it('should build context prompt from session', async () => {
@@ -189,7 +191,8 @@ describe('AgentService - Enhanced Features', () => {
         ])
       );
 
-      await service.handleConversation('chat123', 'Question?');
+      // Pass streamId to enable streaming
+      await service.handleConversation('chat123', 'Question?', 'session-123');
 
       // Should emit chunk events with session ID
       expect(eventEmitter.emit).toHaveBeenCalledWith(
@@ -301,7 +304,7 @@ describe('AgentService - Enhanced Features', () => {
           success: true,
           executionTime: 5000,
           cost: 0.25,
-          totalTokens: 10000,
+          // Note: totalTokens is calculated from assistant messages, not from the result message
         })
       );
     });
@@ -341,9 +344,10 @@ describe('AgentService - Enhanced Features', () => {
           yield {
             type: 'system',
             subtype: 'compact_boundary',
-            trigger: 'token_limit',
-            originalMessageCount: 100,
-            compactedMessageCount: 50,
+            compact_metadata: {
+              trigger: 'auto',
+              pre_tokens: 50000,
+            }
           } as any;
           yield MockSDKStream.createAssistantMessage('Done');
         })()
@@ -355,9 +359,8 @@ describe('AgentService - Enhanced Features', () => {
         `analysis.compaction.${sessionId}`,
         expect.objectContaining({
           ticker: 'AAPL',
-          trigger: 'token_limit',
-          messagesBefore: 100,
-          messagesAfter: 50,
+          trigger: 'auto',
+          messagesBefore: 50000, // Using pre_tokens
         })
       );
     });
@@ -369,7 +372,11 @@ describe('AgentService - Enhanced Features', () => {
         (async function* () {
           yield {
             type: 'stream_event',
-            partialText: 'Partial content...',
+            event: {
+              delta: {
+                text: 'Partial content...'
+              }
+            }
           } as any;
           yield MockSDKStream.createAssistantMessage('Full content');
         })()
@@ -426,11 +433,11 @@ describe('AgentService - Enhanced Features', () => {
         expect.any(Object)
       );
       expect(eventEmitter.emit).toHaveBeenCalledWith(
-        `analysis.chunk.${sessionId}`,
+        `analysis.result.${sessionId}`,
         expect.any(Object)
       );
       expect(eventEmitter.emit).toHaveBeenCalledWith(
-        `analysis.result.${sessionId}`,
+        `analysis.chunk.${sessionId}`,
         expect.any(Object)
       );
     });

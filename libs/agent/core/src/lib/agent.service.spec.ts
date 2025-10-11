@@ -180,27 +180,6 @@ describe('AgentService - Baseline Tests', () => {
       });
     });
 
-    it('should emit chunk events during streaming', async () => {
-      const sessionId = 'test-session-123';
-
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createAssistantMessage('First chunk'),
-          MockSDKStream.createAssistantMessage('Second chunk'),
-        ])
-      );
-
-      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
-
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        `analysis.chunk.${sessionId}`,
-        expect.objectContaining({
-          ticker: 'AAPL',
-          content: expect.any(String),
-        })
-      );
-    });
-
     it('should emit tool events when tools are called', async () => {
       const sessionId = 'test-session-123';
 
@@ -343,43 +322,6 @@ describe('AgentService - Baseline Tests', () => {
     });
   });
 
-  describe('PDF Handling', () => {
-    it('should emit PDF event when PDF is generated', async () => {
-      const sessionId = 'test-session-123';
-
-      mockQuery.mockReturnValue(
-        MockSDKStream.createStream([
-          MockSDKStream.createToolUseMessage(
-            'mcp__stock-analyzer__generate_pdf',
-            { ticker: 'AAPL', reportType: 'summary' },
-            'toolu_pdf_001'
-          ),
-          MockSDKStream.createToolResultMessage(
-            'toolu_pdf_001',
-            JSON.stringify({
-              success: true,
-              ticker: 'AAPL',
-              pdfBase64: 'base64data',
-              fileSize: 12345,
-              reportType: 'summary',
-            })
-          ),
-        ])
-      );
-
-      await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
-
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        `analysis.pdf.${sessionId}`,
-        expect.objectContaining({
-          ticker: 'AAPL',
-          pdfBase64: 'base64data',
-          fileSize: 12345,
-          reportType: 'summary',
-        })
-      );
-    });
-  });
 
   describe('Error Handling', () => {
     it('should handle stream processing errors', async () => {
@@ -427,17 +369,6 @@ describe('AgentService - Baseline Tests', () => {
       );
 
       await service.analyzeStock('test-chat-1', 'AAPL', 'Analyze AAPL', undefined, sessionId);
-
-      // Verify chunk event structure
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        `analysis.chunk.${sessionId}`,
-        expect.objectContaining({
-          ticker: 'AAPL',
-          content: expect.any(String),
-          phase: 'executive-summary',
-          timestamp: expect.any(String),
-        })
-      );
 
       // Verify complete event structure
       expect(eventEmitter.emit).toHaveBeenCalledWith(

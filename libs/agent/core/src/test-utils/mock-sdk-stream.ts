@@ -49,9 +49,10 @@ export interface MockUserMessageReplay {
 
 export interface MockResultMessage {
   type: 'result';
-  conversationUuid: string;
-  executionTimeMs: number;
-  costUsd?: number;
+  subtype: 'success' | 'error_max_turns' | 'error_during_execution';
+  conversationUuid?: string;
+  duration_ms?: number;
+  total_cost_usd?: number;
   totalTokens?: number;
   error?: {
     type: string;
@@ -216,9 +217,10 @@ export class MockSDKStream {
   ): MockResultMessage {
     return {
       type: 'result',
+      subtype: options?.error ? 'error_during_execution' : 'success',
       conversationUuid: `conv_${Date.now()}`,
-      executionTimeMs: options?.executionTimeMs || 15000,
-      costUsd: options?.costUsd || 0.05,
+      duration_ms: options?.executionTimeMs || 15000,
+      total_cost_usd: options?.costUsd || 0.05,
       totalTokens: options?.totalTokens || 2500,
       error: options?.error,
       permissionDenials: [],
@@ -283,8 +285,9 @@ export class MockSDKStream {
   static createErrorMessage(errorMessage: string): MockResultMessage {
     return {
       type: 'result',
+      subtype: 'error_during_execution',
       conversationUuid: `conv_${Date.now()}`,
-      executionTimeMs: 1000,
+      duration_ms: 1000,
       error: {
         type: 'api_error',
         message: errorMessage,

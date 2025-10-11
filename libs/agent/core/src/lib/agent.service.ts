@@ -444,7 +444,17 @@ export class AgentService {
         // 5. SDKPartialAssistantMessage - Streaming partial updates (stream_event type)
         else if (message.type === 'stream_event') {
           const streamEvent = message as any;
-          const partialText = streamEvent.partialText || streamEvent.delta?.text || streamEvent.text || '';
+
+          // Extract partial text from RawMessageStreamEvent structure
+          // Based on content_block_delta event with text_delta type
+          let partialText = '';
+          if (streamEvent.event?.type === 'content_block_delta') {
+            if (streamEvent.event.delta?.type === 'text_delta') {
+              partialText = streamEvent.event.delta.text || '';
+            } else if (streamEvent.event.delta?.type === 'thinking_delta') {
+              partialText = streamEvent.event.delta.thinking || '';
+            }
+          }
 
           if (partialText) {
             this.logger.debug(`[${sessionId}] Partial event (${partialText.length} chars): ${partialText.substring(0, 50)}...`);
