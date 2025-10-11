@@ -68,6 +68,48 @@ export interface StreamCompleteResponse {
   };
 }
 
+export interface StreamToolResultResponse {
+  type: 'tool_result';
+  ticker: string;
+  toolId: string;
+  timestamp: string;
+}
+
+export interface StreamResultResponse {
+  type: 'result';
+  ticker: string;
+  success: boolean;
+  executionTime: number;
+  cost: number;
+  totalTokens: number;
+  timestamp: string;
+}
+
+export interface StreamSystemResponse {
+  type: 'system';
+  ticker: string;
+  model: string;
+  permissionMode: string;
+  timestamp: string;
+}
+
+export interface StreamCompactionResponse {
+  type: 'compaction';
+  ticker: string;
+  trigger: string;
+  messagesBefore: number;
+  messagesAfter: number;
+  timestamp: string;
+}
+
+export interface StreamPartialResponse {
+  type: 'partial';
+  ticker: string;
+  partialContent: string;
+  deltaType: 'text' | 'thinking' | 'tool_input' | 'unknown';
+  timestamp: string;
+}
+
 export interface StreamErrorResponse {
   type: 'error';
   message: string;
@@ -79,6 +121,11 @@ export type StreamResponse =
   | StreamChunkResponse
   | StreamToolResponse
   | StreamThinkingResponse
+  | StreamToolResultResponse
   | StreamPDFResponse
+  | StreamResultResponse
+  | StreamSystemResponse
+  | StreamCompactionResponse
+  | StreamPartialResponse
   | StreamCompleteResponse
   | StreamErrorResponse;
