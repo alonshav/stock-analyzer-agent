@@ -17,6 +17,13 @@
         }
       }
     },
+    "build:watch": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "webpack-cli build --watch --node-env=development",
+        "cwd": "apps/telegram-bot"
+      }
+    },
     "prune-lockfile": {
       "dependsOn": ["build"],
       "cache": true,

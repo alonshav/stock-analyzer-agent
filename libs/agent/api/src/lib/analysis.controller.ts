@@ -36,7 +36,7 @@ export class AnalysisController {
 
     // Start analysis in background
     this.agentService
-      .analyzeStock(ticker, body.prompt, body.options)
+      .analyzeStock(analysisId, ticker, body.prompt, body.options)
       .then((result) => {
         this.analysisCache.set(analysisId, {
           analysisId,

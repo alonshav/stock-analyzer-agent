@@ -104,7 +104,41 @@ interface ConnectedEvent {
   ticker: string;
 }
 
-type StreamEvent = ChunkEvent | ToolEvent | ThinkingEvent | ToolResultEvent | PDFEvent | CompleteEvent | ErrorEvent | ConnectedEvent;
+interface ResultEvent {
+  type: 'result';
+  ticker: string;
+  success: boolean;
+  executionTime?: number;
+  cost?: number;
+  totalTokens?: number;
+  timestamp: string;
+}
+
+interface SystemEvent {
+  type: 'system';
+  ticker: string;
+  model?: string;
+  permissionMode?: string;
+  timestamp: string;
+}
+
+interface CompactionEvent {
+  type: 'compaction';
+  ticker: string;
+  trigger?: string;
+  messagesBefore?: number;
+  messagesAfter?: number;
+  timestamp: string;
+}
+
+interface PartialEvent {
+  type: 'partial';
+  ticker: string;
+  partialContent?: string;
+  timestamp: string;
+}
+
+type StreamEvent = ChunkEvent | ToolEvent | ThinkingEvent | ToolResultEvent | PDFEvent | ResultEvent | SystemEvent | CompactionEvent | PartialEvent | CompleteEvent | ErrorEvent | ConnectedEvent;
 
 @Injectable()
 export class StreamManagerService {
@@ -322,6 +356,87 @@ export class StreamManagerService {
             break;
           }
 
+          case StreamEventType.RESULT: {
+            // Log result metrics (optional: could display to user)
+            this.logger.log(`[RESULT] Analysis result: success=${data.success}, tokens=${data.totalTokens}, cost=${data.cost}`);
+            break;
+          }
+
+          case StreamEventType.SYSTEM: {
+            // Log system initialization (optional: could display to user)
+            this.logger.log(`[SYSTEM] System initialized: model=${data.model}, permissionMode=${data.permissionMode}`);
+            break;
+          }
+
+          case StreamEventType.COMPACTION: {
+            // Log conversation compaction (optional: could display to user)
+            this.logger.log(`[COMPACTION] Conversation compacted: ${data.messagesBefore} → ${data.messagesAfter} messages`);
+            break;
+          }
+
+          case StreamEventType.PARTIAL: {
+            // Handle partial streaming content (real-time token streaming)
+            this.logger.log(`[PARTIAL] Received partial content: ${data.partialContent?.substring(0, 100)}...`);
+
+            if (data.partialContent) {
+              hasReceivedContent = true;
+              // Append partial content to buffer
+              const buffer = this.streamBuffers.get(chatId) || '';
+              const updatedBuffer = buffer + data.partialContent;
+              this.streamBuffers.set(chatId, updatedBuffer);
+              this.logger.log(`[PARTIAL] Buffer size: ${updatedBuffer.length} chars`);
+              updateCounter++;
+
+              // Update using TimeConstants
+              const shouldUpdate =
+                Date.now() - lastUpdateTime > TimeConstants.STREAM_UPDATE_INTERVAL ||
+                updateCounter >= TimeConstants.STREAM_CHUNK_THRESHOLD;
+
+              if (shouldUpdate) {
+                updateCounter = 0;
+                lastUpdateTime = Date.now();
+
+                // Display text for conversation mode (no "Analyzing..." header)
+                const displayText = `Analyzing ${ticker}...\n\n${updatedBuffer}`;
+                this.logger.log(`[PARTIAL] Updating Telegram message: ${displayText.length} chars, messageId: ${currentMessageId}`);
+
+                try {
+                  if (displayText.length <= TelegramLimits.SAFE_MESSAGE_LENGTH) {
+                    this.logger.log(`[PARTIAL] Editing existing message`);
+                    await ctx.telegram.editMessageText(
+                      ctx.chat!.id,
+                      currentMessageId,
+                      undefined,
+                      displayText
+                    );
+                    this.logger.log(`[PARTIAL] Message edited successfully`);
+                  } else {
+                    this.logger.log(`[PARTIAL] Creating new message (overflow)`);
+                    const newMsg = await ctx.reply(updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                    currentMessageId = newMsg.message_id;
+                    this.streamBuffers.set(chatId, updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                  }
+                } catch (error) {
+                  const err = error as Error;
+                  if (err.message?.includes('message is not modified')) {
+                    // Content unchanged, skip
+                  } else if (err.message?.includes('too many requests')) {
+                    this.logger.debug('Rate limited, skipping update');
+                  } else {
+                    // Send new message if edit fails
+                    try {
+                      const newMsg = await ctx.reply(displayText.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                      currentMessageId = newMsg.message_id;
+                    } catch {
+                      // Ignore if send also fails
+                    }
+                  }
+                }
+              }
+            }
+            break;
+          }
+
           case StreamEventType.COMPLETE: {
             clearInterval(interventionTimer);
 
@@ -498,6 +613,58 @@ export class StreamManagerService {
             } catch {
               // Ignore
             }
+            break;
+
+          case StreamEventType.PARTIAL: {
+            // Handle partial streaming in conversation mode
+            if (data.partialContent) {
+              const buffer = this.streamBuffers.get(chatId) || '';
+              const updatedBuffer = buffer + data.partialContent;
+              this.streamBuffers.set(chatId, updatedBuffer);
+              updateCounter++;
+
+              const shouldUpdate =
+                Date.now() - lastUpdateTime > TimeConstants.STREAM_UPDATE_INTERVAL ||
+                updateCounter >= TimeConstants.STREAM_CHUNK_THRESHOLD;
+
+              if (shouldUpdate) {
+                updateCounter = 0;
+                lastUpdateTime = Date.now();
+
+                try {
+                  if (updatedBuffer.length <= TelegramLimits.SAFE_MESSAGE_LENGTH) {
+                    await ctx.telegram.editMessageText(
+                      ctx.chat!.id,
+                      currentMessageId,
+                      undefined,
+                      updatedBuffer
+                    );
+                  } else {
+                    const newMsg = await ctx.reply(updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                    currentMessageId = newMsg.message_id;
+                    this.streamBuffers.set(chatId, updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                  }
+                } catch (error) {
+                  const err = error as Error;
+                  if (!err.message?.includes('message is not modified') && !err.message?.includes('too many requests')) {
+                    try {
+                      const newMsg = await ctx.reply(updatedBuffer.slice(-TelegramLimits.TRUNCATED_MESSAGE_LENGTH));
+                      currentMessageId = newMsg.message_id;
+                    } catch {
+                      // Ignore
+                    }
+                  }
+                }
+              }
+            }
+            break;
+          }
+
+          case StreamEventType.RESULT:
+          case StreamEventType.SYSTEM:
+          case StreamEventType.COMPACTION:
+            // Log only for conversation mode
+            this.logger.log(`[${data.type.toUpperCase()}] Event received in conversation mode`);
             break;
 
           case StreamEventType.COMPLETE:

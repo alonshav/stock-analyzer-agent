@@ -92,6 +92,38 @@ export class SSEController {
         res.write(`data: ${JSON.stringify(pdfResponse)}\n\n`);
       };
 
+      const resultListener = (data: any) => {
+        const resultResponse: StreamResponse = {
+          type: StreamEventType.RESULT,
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(resultResponse)}\n\n`);
+      };
+
+      const systemListener = (data: any) => {
+        const systemResponse: StreamResponse = {
+          type: StreamEventType.SYSTEM,
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(systemResponse)}\n\n`);
+      };
+
+      const compactionListener = (data: any) => {
+        const compactionResponse: StreamResponse = {
+          type: StreamEventType.COMPACTION,
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(compactionResponse)}\n\n`);
+      };
+
+      const partialListener = (data: any) => {
+        const partialResponse: StreamResponse = {
+          type: StreamEventType.PARTIAL,
+          ...data,
+        };
+        res.write(`data: ${JSON.stringify(partialResponse)}\n\n`);
+      };
+
       const completeListener = (data: any) => {
         const completeResponse: StreamResponse = {
           type: StreamEventType.COMPLETE,
@@ -119,6 +151,10 @@ export class SSEController {
       this.eventEmitter.on(createEventName(StreamEventType.THINKING, streamId), thinkingListener);
       this.eventEmitter.on(createEventName(StreamEventType.TOOL_RESULT, streamId), toolResultListener);
       this.eventEmitter.on(createEventName(StreamEventType.PDF, streamId), pdfListener);
+      this.eventEmitter.on(createEventName(StreamEventType.RESULT, streamId), resultListener);
+      this.eventEmitter.on(createEventName(StreamEventType.SYSTEM, streamId), systemListener);
+      this.eventEmitter.on(createEventName(StreamEventType.COMPACTION, streamId), compactionListener);
+      this.eventEmitter.on(createEventName(StreamEventType.PARTIAL, streamId), partialListener);
       this.eventEmitter.on(createEventName(StreamEventType.COMPLETE, streamId), completeListener);
       this.eventEmitter.on(createEventName(StreamEventType.ERROR, streamId), errorListener);
 
@@ -130,6 +166,10 @@ export class SSEController {
         this.eventEmitter.removeListener(createEventName(StreamEventType.THINKING, streamId), thinkingListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.TOOL_RESULT, streamId), toolResultListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.PDF, streamId), pdfListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.RESULT, streamId), resultListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.SYSTEM, streamId), systemListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.COMPACTION, streamId), compactionListener);
+        this.eventEmitter.removeListener(createEventName(StreamEventType.PARTIAL, streamId), partialListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.COMPLETE, streamId), completeListener);
         this.eventEmitter.removeListener(createEventName(StreamEventType.ERROR, streamId), errorListener);
         this.streamService.endSession(streamId);

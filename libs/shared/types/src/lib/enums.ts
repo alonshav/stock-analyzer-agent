@@ -84,6 +84,10 @@ export enum StreamEventType {
   TOOL = 'tool',
   TOOL_RESULT = 'tool_result',
   PDF = 'pdf',
+  RESULT = 'result',
+  SYSTEM = 'system',
+  COMPACTION = 'compaction',
+  PARTIAL = 'partial',
   COMPLETE = 'complete',
   ERROR = 'error',
 }

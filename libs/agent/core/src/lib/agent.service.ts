@@ -254,13 +254,20 @@ export class AgentService {
         mcpServers: {
           'stock-analyzer': this.mcpServer,
         },
-        includePartialMessages: true,
+        includePartialMessages: false,
 
         // Session-aware hooks using SDK hook events
         hooks: {
+          SessionStart: [{
+            hooks: [async (input: any) => {
+              this.logger.debug(`SDK SessionStart hook: ${JSON.stringify(input)}`);
+              return { continue: true };
+            }],
+          }],
           PreToolUse: [{
             hooks: [async (input: any, toolUseID) => {
               // Call our HooksService onToolUse hook for validation and tracking
+              this.logger.debug(`Pre Tool Use hook: ${JSON.stringify(input)}` + `, toolUseID: ${toolUseID}`);
               const toolUseHook = this.hooksService.createOnToolUseHook(sessionId, chatId);
               try {
                 toolUseHook({
@@ -277,9 +284,11 @@ export class AgentService {
               return { continue: true };
             }],
           }],
+
           PostToolUse: [{
             hooks: [async (input: any, toolUseID) => {
               // Call our HooksService onToolResult hook for error enhancement and caching
+              this.logger.debug(`Post Tool Use hook: ${JSON.stringify(input)}` + `, toolUseID: ${toolUseID}`);
               const toolResultHook = this.hooksService.createOnToolResultHook(sessionId, chatId);
               toolResultHook({
                 tool_use_id: toolUseID || '',
@@ -287,7 +296,7 @@ export class AgentService {
                   ? input.tool_response
                   : JSON.stringify(input.tool_response),
                 is_error: input.tool_response?.isError || false,
-              });
+              })
 
               return { continue: true };
             }],
@@ -301,6 +310,8 @@ export class AgentService {
 
     // Process stream with COMPLETE message type handling (all 7 types)
     for await (const message of stream) {
+      this.logger.debug(`[${sessionId}] Received message of type: ${(message as any).type}`);
+      this.logger.log(`message: ${JSON.stringify(message)}`);
       try {
         // Track message with hooks service for session metrics
         try {
@@ -423,14 +434,15 @@ export class AgentService {
         // 3. SDKResultMessage - Final conversation result
         else if (message.type === 'result') {
           this.logger.log(`[${sessionId}] Analysis result received`);
+          this.logger.debug(`[${sessionId}] Result message structure: ${JSON.stringify(message, null, 2)}`);
 
           if (streamToClient) {
-            this.eventEmitter.emit(`analysis.result.${sessionId}`, {
+            this.eventEmitter.emit(createEventName(StreamEventType.RESULT, sessionId), {
               ticker,
               success: !(message as any).error,
               executionTime: (message as any).executionTimeMs,
               cost: (message as any).costUsd,
-              totalTokens: (message as any).totalTokens,
+              totalTokens: totalTokens, // Use locally tracked tokens instead
               timestamp: new Date().toISOString(),
             });
           }
@@ -443,7 +455,7 @@ export class AgentService {
           if (systemMessage.subtype === 'init') {
             this.logger.log(`[${sessionId}] System initialized`);
             if (streamToClient) {
-              this.eventEmitter.emit(`analysis.system.${sessionId}`, {
+              this.eventEmitter.emit(createEventName(StreamEventType.SYSTEM, sessionId), {
                 ticker,
                 model: systemMessage.model,
                 permissionMode: systemMessage.permissionMode,
@@ -453,7 +465,7 @@ export class AgentService {
           } else if (systemMessage.subtype === 'compact_boundary') {
             this.logger.log(`[${sessionId}] Conversation compacted`);
             if (streamToClient) {
-              this.eventEmitter.emit(`analysis.compaction.${sessionId}`, {
+              this.eventEmitter.emit(createEventName(StreamEventType.COMPACTION, sessionId), {
                 ticker,
                 trigger: systemMessage.trigger,
                 messagesBefore: systemMessage.originalMessageCount,
@@ -466,10 +478,18 @@ export class AgentService {
 
         // 5. SDKPartialAssistantMessage - Streaming partial updates (stream_event type)
         else if (message.type === 'stream_event') {
-          if (streamToClient) {
-            this.eventEmitter.emit(`analysis.partial.${sessionId}`, {
+          const streamEvent = message as any;
+          const partialText = streamEvent.partialText || streamEvent.delta?.text || streamEvent.text || '';
+
+          if (partialText) {
+            this.logger.debug(`[${sessionId}] Partial event (${partialText.length} chars): ${partialText.substring(0, 50)}...`);
+          }
+
+          // Emit PARTIAL events for all phases to enable real-time streaming
+          if (streamToClient && partialText) {
+            this.eventEmitter.emit(createEventName(StreamEventType.PARTIAL, sessionId), {
               ticker,
-              partialContent: (message as any).partialText,
+              partialContent: partialText,
               timestamp: new Date().toISOString(),
             });
           }

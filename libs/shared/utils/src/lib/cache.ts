@@ -33,12 +33,13 @@ export class CacheManager {
       ['key_metrics', 3600],
     ]);
 
+    // Silent cache events - no logging
     this.cache.on('expired', (key: string, value: any) => {
-      console.error(`Cache expired for key: ${key}`);
+      // Silently handle expiration
     });
 
     this.cache.on('flush', () => {
-      console.error('Cache flushed');
+      // Silently handle flush
     });
   }
 
@@ -60,10 +61,8 @@ export class CacheManager {
     try {
       const value = this.cache.get<T>(key);
       if (value !== undefined) {
-        console.error(`Cache hit for key: ${key}`);
         return value;
       }
-      console.error(`Cache miss for key: ${key}`);
       return null;
     } catch (error) {
       console.error(`Error getting cache for key ${key}:`, error);
@@ -75,11 +74,6 @@ export class CacheManager {
     try {
       const ttl = dataType ? this.cacheTTLs.get(dataType) || this.defaultTTL : this.defaultTTL;
       const success = this.cache.set(key, value, ttl);
-
-      if (success) {
-        console.error(`Cache set for key: ${key} with TTL: ${ttl}s`);
-      }
-
       return success;
     } catch (error) {
       console.error(`Error setting cache for key ${key}:`, error);
