@@ -7,22 +7,34 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  createSdkMcpServer,
+  tool,
+  type SDKMessage,
+  type SDKSystemMessage,
+  type SDKAssistantMessage,
+  type SDKUserMessage,
+  type SDKResultMessage,
+  type SDKPartialAssistantMessage,
+  type SDKCompactBoundaryMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { STOCK_VALUATION_FRAMEWORK } from './prompts/framework-v2.3';
 import { createToolRegistry } from '@stock-analyzer/mcp/tools';
 import { z } from 'zod';
 import {
-  isToolName,
-  ToolName,
   createEventName,
   StreamEventType,
   FRAMEWORK_VERSION,
   DEFAULT_MODEL,
   DEFAULT_MAX_TURNS,
-  DEFAULT_MAX_THINKING_TOKENS
+  DEFAULT_MAX_THINKING_TOKENS,
 } from '@stock-analyzer/shared/types';
-import { SessionManagerService, MessageRole } from '@stock-analyzer/agent/session';
+import {
+  SessionManagerService,
+  MessageRole,
+} from '@stock-analyzer/agent/session';
 
 export interface AnalysisOptions {
   generatePDF?: boolean;
@@ -42,6 +54,15 @@ export interface AnalysisResult {
     model: string;
     duration: number;
   };
+}
+
+export interface ExecuteQueryParams {
+  chatId: string;
+  sessionId: string;
+  ticker: string;
+  prompt: string;
+  phase: 'full-analysis' | 'executive-summary' | 'conversation';
+  streamToClient: boolean;
 }
 
 @Injectable()
@@ -77,17 +98,26 @@ export class AgentService {
         async (args) => {
           try {
             this.logger.debug(`Executing tool: ${mcpTool.name}`);
-            const result = await this.toolRegistry.executeTool(mcpTool.name, args);
-            this.logger.debug(`Tool ${mcpTool.name} returned result type: ${typeof result}`);
+            const result = await this.toolRegistry.executeTool(
+              mcpTool.name,
+              args
+            );
+            this.logger.debug(
+              `Tool ${mcpTool.name} returned result type: ${typeof result}`
+            );
             return result;
           } catch (error) {
             this.logger.error(`Error in tool ${mcpTool.name}:`, error);
             return {
-              content: [{
-                type: 'text',
-                text: `Error executing ${mcpTool.name}: ${error instanceof Error ? error.message : 'Unknown error'}`
-              }],
-              isError: true
+              content: [
+                {
+                  type: 'text',
+                  text: `Error executing ${mcpTool.name}: ${
+                    error instanceof Error ? error.message : 'Unknown error'
+                  }`,
+                },
+              ],
+              isError: true,
             };
           }
         }
@@ -100,7 +130,9 @@ export class AgentService {
       tools: sdkTools,
     });
 
-    this.logger.log(`Initialized Claude Agent SDK with ${sdkTools.length} tools`);
+    this.logger.log(
+      `Initialized Claude Agent SDK with ${sdkTools.length} tools`
+    );
   }
 
   /**
@@ -111,7 +143,7 @@ export class AgentService {
     chatId: string,
     ticker: string,
     userPrompt: string,
-    options?: AnalysisOptions,
+    _options?: AnalysisOptions,
     sessionId?: string
   ): Promise<AnalysisResult> {
     const startTime = Date.now();
@@ -134,7 +166,11 @@ export class AgentService {
       });
 
       // Step 3: Complete session
-      this.sessionManager.completeSession(chatId, executiveSummary, executiveSummary);
+      this.sessionManager.completeSession(
+        chatId,
+        executiveSummary,
+        executiveSummary
+      );
 
       // Step 4: Emit completion
       const duration = Date.now() - startTime;
@@ -151,16 +187,18 @@ export class AgentService {
       };
 
       if (sessionId) {
-        this.eventEmitter.emit(createEventName(StreamEventType.COMPLETE, sessionId), {
-          ticker,
-          timestamp: result.timestamp,
-          metadata: result.metadata,
-        });
+        this.eventEmitter.emit(
+          createEventName(StreamEventType.COMPLETE, sessionId),
+          {
+            ticker,
+            timestamp: result.timestamp,
+            metadata: result.metadata,
+          }
+        );
       }
 
       this.logger.log(`Analysis complete for ${ticker} (${duration}ms)`);
       return result;
-
     } catch (error) {
       this.logger.error(`[${sessionIdToUse}] Analysis failed:`, error);
       this.sessionManager.stopSession(chatId);
@@ -178,8 +216,15 @@ export class AgentService {
     streamId?: string
   ): Promise<string> {
     // Try to get ACTIVE session first, then fall back to COMPLETED
-    this.logger.log(`Handling conversation for chat ${chatId} with message: ${message.substring(0, 50)}...`);
-    const session = this.sessionManager.getActiveSession(chatId) || this.sessionManager.getCompletedSession(chatId);
+    this.logger.log(
+      `Handling conversation for chat ${chatId} with message: ${message.substring(
+        0,
+        50
+      )}...`
+    );
+    const session =
+      this.sessionManager.getActiveSession(chatId) ||
+      this.sessionManager.getCompletedSession(chatId);
 
     if (!session) {
       throw new Error('No active or completed session for conversation');
@@ -187,10 +232,15 @@ export class AgentService {
 
     const effectiveSessionId = streamId || session.sessionId;
 
-    this.logger.log(`[${effectiveSessionId}] Conversation: ${message.substring(0, 50)}...`);
+    this.logger.log(
+      `[${effectiveSessionId}] Conversation: ${message.substring(0, 50)}...`
+    );
 
     // Step 1: Build context from session
-    const contextPrompt = this.sessionManager.buildContextPrompt(chatId, message);
+    const contextPrompt = this.sessionManager.buildContextPrompt(
+      chatId,
+      message
+    );
 
     // Step 2: Execute with streaming (use streamId for event emission if provided)
     const result = await this.executeQuery({
@@ -208,15 +258,18 @@ export class AgentService {
 
     // Step 4: Emit completion event if streamId provided
     if (streamId) {
-      this.eventEmitter.emit(createEventName(StreamEventType.COMPLETE, streamId), {
-        ticker: session.ticker,
-        metadata: {
-          analysisDate: new Date().toISOString(),
-          framework: FRAMEWORK_VERSION,
-          model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
-          duration: 0, // Conversation is quick
-        },
-      });
+      this.eventEmitter.emit(
+        createEventName(StreamEventType.COMPLETE, streamId),
+        {
+          ticker: session.ticker,
+          metadata: {
+            analysisDate: new Date().toISOString(),
+            framework: FRAMEWORK_VERSION,
+            model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
+            duration: 0, // Conversation is quick
+          },
+        }
+      );
     }
 
     return result;
@@ -226,14 +279,7 @@ export class AgentService {
    * Core Query Executor
    * Handles all 7 SDK message types with debug logging
    */
-  private async executeQuery(params: {
-    chatId: string;
-    sessionId: string;
-    ticker: string;
-    prompt: string;
-    phase: 'full-analysis' | 'executive-summary' | 'conversation';
-    streamToClient: boolean;
-  }): Promise<string> {
+  private async executeQuery(params: ExecuteQueryParams): Promise<string> {
     const { chatId, sessionId, ticker, prompt, phase, streamToClient } = params;
 
     let fullContent = '';
@@ -246,7 +292,9 @@ export class AgentService {
         systemPrompt: STOCK_VALUATION_FRAMEWORK,
         model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
         maxThinkingTokens: DEFAULT_MAX_THINKING_TOKENS,
-        maxTurns: parseInt(this.config.get('ANTHROPIC_MAX_TURNS') || String(DEFAULT_MAX_TURNS)),
+        maxTurns: parseInt(
+          this.config.get('ANTHROPIC_MAX_TURNS') || String(DEFAULT_MAX_TURNS)
+        ),
         permissionMode: 'bypassPermissions',
         mcpServers: {
           'stock-analyzer': this.mcpServer,
@@ -255,228 +303,178 @@ export class AgentService {
 
         // Basic debug hooks for monitoring
         hooks: {
-          SessionStart: [{
-            hooks: [async (input: any) => {
-              this.logger.debug(`[${sessionId}] Session started for chat ${chatId}`);
-              return { continue: true };
-            }],
-          }],
-          PreToolUse: [{
-            hooks: [async (input: any, toolUseID) => {
-              this.logger.debug(`[${sessionId}] PreToolUse - tool: ${input.tool_name}, toolId: ${toolUseID}`);
-              this.logger.debug(`[${sessionId}] Tool input: ${JSON.stringify(input.tool_input)}`);
-              return { continue: true };
-            }],
-          }],
-          PostToolUse: [{
-            hooks: [async (input: any, toolUseID) => {
-              this.logger.debug(`[${sessionId}] PostToolUse - toolId: ${toolUseID}`);
-              this.logger.debug(`[${sessionId}] Tool response type: ${typeof input.tool_response}`);
-              return { continue: true };
-            }],
-          }],
+          SessionStart: [
+            {
+              hooks: [
+                async () => {
+                  this.logger.debug(
+                    `[${sessionId}] Session started for chat ${chatId}`
+                  );
+                  return { continue: true };
+                },
+              ],
+            },
+          ],
+          PreToolUse: [
+            {
+              hooks: [
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                async (input: any, toolUseID?: string) => {
+                  this.logger.debug(
+                    `[${sessionId}] PreToolUse - tool: ${input.tool_name}, toolId: ${toolUseID}`
+                  );
+                  this.logger.debug(
+                    `[${sessionId}] Tool input: ${JSON.stringify(
+                      input.tool_input
+                    )}`
+                  );
+                  return { continue: true };
+                },
+              ],
+            },
+          ],
+          PostToolUse: [
+            {
+              hooks: [
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                async (input: any, toolUseID?: string) => {
+                  this.logger.debug(
+                    `[${sessionId}] PostToolUse - toolId: ${toolUseID}`
+                  );
+                  this.logger.debug(
+                    `[${sessionId}] Tool response type: ${typeof input.tool_response}`
+                  );
+                  return { continue: true };
+                },
+              ],
+            },
+          ],
         },
       },
     });
 
-    let pendingPDFToolId: string | undefined;
-    const toolInputMap = new Map<string, any>();
-
-    // Process stream with COMPLETE message type handling (all 7 types)
+    // ============================================================================
+    // STREAM MESSAGE PROCESSING (All 7 SDK Message Types)
+    // ============================================================================
     for await (const message of stream) {
-      this.logger.debug(`[${sessionId}] Received message of type: ${(message as any).type}`);
-      this.logger.log(`message: ${JSON.stringify(message, null, 2)}`);
+      // Log message receipt (debug mode shows full JSON)
+      this.logger.log(`[${sessionId}] ━━━ Message Type: ${message.type} ━━━`);
+      this.logger.debug(
+        `[${sessionId}] Full message: ${JSON.stringify(message, null, 2)}`
+      );
+
       try {
-        // 1. SDKAssistantMessage - Complete assistant response
-        if (message.type === 'assistant') {
-          const apiMessage = message.message;
-          let content = '';
-
-          for (const block of apiMessage.content) {
-            // Text block
-            if (block.type === 'text') {
-              content += block.text;
+        switch (message.type) {
+          // ====================================================================
+          // 1. SYSTEM MESSAGE - Initialization and compaction events
+          // ====================================================================
+          case 'system': {
+            if ('subtype' in message && message.subtype === 'init') {
+              const initMessage = message as SDKSystemMessage;
+              this.handleSystemInitMessage(
+                initMessage,
+                sessionId,
+                ticker,
+                streamToClient
+              );
+            } else if (
+              'subtype' in message &&
+              message.subtype === 'compact_boundary'
+            ) {
+              const compactMessage = message as SDKCompactBoundaryMessage;
+              this.handleCompactBoundaryMessage(
+                compactMessage,
+                sessionId,
+                ticker,
+                streamToClient
+              );
             }
-            // Thinking block
-            else if (block.type === 'thinking') {
-              if (streamToClient) {
-                this.eventEmitter.emit(createEventName(StreamEventType.THINKING, sessionId), {
-                  ticker,
-                  message: 'Analyzing data...',
-                  timestamp: new Date().toISOString(),
-                });
-              }
-            }
-            // Tool use block
-            else if (block.type === 'tool_use') {
-              toolInputMap.set(block.id, {
-                name: block.name,
-                input: block.input
-              });
-
-              if (isToolName(block.name, ToolName.GENERATE_PDF)) {
-                pendingPDFToolId = block.id;
-              }
-
-              if (streamToClient) {
-                this.eventEmitter.emit(createEventName(StreamEventType.TOOL, sessionId), {
-                  ticker,
-                  toolName: block.name,
-                  toolId: block.id,
-                  toolInput: block.input,
-                  timestamp: new Date().toISOString(),
-                });
-              }
-            }
+            break;
           }
 
-          // Emit text content ONLY for conversation mode (not for analysis)
-          // For analysis, we only want the PDF, not the raw text
-          if (streamToClient && content && phase === 'conversation') {
-            this.eventEmitter.emit(createEventName(StreamEventType.CHUNK, sessionId), {
+          // ====================================================================
+          // 2. PARTIAL ASSISTANT MESSAGE - Streaming text chunks
+          // ====================================================================
+          case 'stream_event': {
+            const streamEvent = message as SDKPartialAssistantMessage;
+            this.handlePartialAssistantMessage(
+              streamEvent,
+              sessionId,
               ticker,
-              content,
+              streamToClient
+            );
+            break;
+          }
+
+          // ====================================================================
+          // 3. ASSISTANT MESSAGE - Complete response with content blocks
+          // ====================================================================
+          case 'assistant': {
+            const assistantMessage = message as SDKAssistantMessage;
+            const textContent = this.handleAssistantMessage(
+              assistantMessage,
+              sessionId,
+              ticker,
               phase,
-              timestamp: new Date().toISOString(),
-            });
-          }
+              streamToClient
+            );
+            fullContent += textContent;
 
-          fullContent += content;
-
-          // Track tokens
-          if (apiMessage.usage) {
-            totalTokens += apiMessage.usage.input_tokens + apiMessage.usage.output_tokens;
-          }
-        }
-
-        // 2. SDKUserMessage - User input/tool results
-        else if (message.type === 'user') {
-          const apiMessage = message.message;
-
-          for (const block of apiMessage.content) {
-            if (block.type === 'tool_result') {
-              const toolInfo = toolInputMap.get(block.tool_use_id);
-
-              if (streamToClient) {
-                this.eventEmitter.emit(createEventName(StreamEventType.TOOL_RESULT, sessionId), {
-                  ticker,
-                  toolId: block.tool_use_id,
-                  toolName: toolInfo?.name,
-                  toolInput: toolInfo?.input,
-                  timestamp: new Date().toISOString(),
-                });
-              }
-
-              // Special handling for PDF
-              if (pendingPDFToolId && block.tool_use_id === pendingPDFToolId) {
-                try {
-                  if (Array.isArray(block.content)) {
-                    for (const resultBlock of block.content) {
-                      if (resultBlock.type === 'text') {
-                        const pdfData = JSON.parse(resultBlock.text);
-
-                        if (pdfData.success && pdfData.pdfBase64 && streamToClient) {
-                          this.eventEmitter.emit(createEventName(StreamEventType.PDF, sessionId), {
-                            ticker: pdfData.ticker,
-                            pdfBase64: pdfData.pdfBase64,
-                            fileSize: pdfData.fileSize,
-                            reportType: pdfData.reportType,
-                            timestamp: new Date().toISOString(),
-                          });
-                        }
-                      }
-                    }
-                  }
-                } catch (e) {
-                  this.logger.error('Failed to parse PDF result', e);
-                }
-                pendingPDFToolId = undefined;
-              }
+            // Track token usage
+            if (assistantMessage.message.usage) {
+              const inputTokens = assistantMessage.message.usage.input_tokens;
+              const outputTokens = assistantMessage.message.usage.output_tokens;
+              totalTokens += inputTokens + outputTokens;
+              this.logger.debug(
+                `[${sessionId}]    📊 Tokens: ${inputTokens} in + ${outputTokens} out = ${totalTokens} total`
+              );
             }
+            break;
           }
-        }
 
-        // 3. SDKResultMessage - Final conversation result
-        else if (message.type === 'result') {
-          this.logger.log(`[${sessionId}] Analysis result received`);
-          this.logger.debug(`[${sessionId}] Result message structure: ${JSON.stringify(message, null, 2)}`);
-
-          if (streamToClient) {
-            this.eventEmitter.emit(createEventName(StreamEventType.RESULT, sessionId), {
+          // ====================================================================
+          // 4. USER MESSAGE - Tool results from system
+          // ====================================================================
+          case 'user': {
+            const userMessage = message as SDKUserMessage;
+            this.handleUserMessage(
+              userMessage,
+              sessionId,
               ticker,
-              success: !(message as any).error,
-              executionTime: (message as any).executionTimeMs,
-              cost: (message as any).costUsd,
-              totalTokens: totalTokens, // Use locally tracked tokens instead
-              timestamp: new Date().toISOString(),
-            });
-          }
-        }
-
-        // 4. SDKSystemMessage - System messages (init, compact_boundary)
-        else if (message.type === 'system') {
-          const systemMessage = message as any;
-
-          if (systemMessage.subtype === 'init') {
-            this.logger.log(`[${sessionId}] System initialized`);
-            if (streamToClient) {
-              this.eventEmitter.emit(createEventName(StreamEventType.SYSTEM, sessionId), {
-                ticker,
-                model: systemMessage.model,
-                permissionMode: systemMessage.permissionMode,
-                timestamp: new Date().toISOString(),
-              });
-            }
-          } else if (systemMessage.subtype === 'compact_boundary') {
-            this.logger.log(`[${sessionId}] Conversation compacted`);
-            if (streamToClient) {
-              this.eventEmitter.emit(createEventName(StreamEventType.COMPACTION, sessionId), {
-                ticker,
-                trigger: systemMessage.trigger,
-                messagesBefore: systemMessage.originalMessageCount,
-                messagesAfter: systemMessage.compactedMessageCount,
-                timestamp: new Date().toISOString(),
-              });
-            }
-          }
-        }
-
-        // 5. SDKPartialAssistantMessage - Streaming partial updates (stream_event type)
-        else if (message.type === 'stream_event') {
-          const streamEvent = message as any;
-
-          // Extract partial text from RawMessageStreamEvent structure
-          // Based on content_block_delta event with text_delta type
-          let partialText = '';
-          if (streamEvent.event?.type === 'content_block_delta') {
-            if (streamEvent.event.delta?.type === 'text_delta') {
-              partialText = streamEvent.event.delta.text || '';
-            } else if (streamEvent.event.delta?.type === 'thinking_delta') {
-              partialText = streamEvent.event.delta.thinking || '';
-            }
+              streamToClient
+            );
+            break;
           }
 
-          if (partialText) {
-            this.logger.debug(`[${sessionId}] Partial event (${partialText.length} chars): ${partialText.substring(0, 50)}...`);
-          }
-
-          // Emit PARTIAL events for all phases to enable real-time streaming
-          if (streamToClient && partialText) {
-            this.eventEmitter.emit(createEventName(StreamEventType.PARTIAL, sessionId), {
+          // ====================================================================
+          // 5. RESULT MESSAGE - Final conversation result with metadata
+          // ====================================================================
+          case 'result': {
+            const resultMsg = message as SDKResultMessage;
+            this.handleResultMessage(
+              resultMsg,
+              sessionId,
               ticker,
-              partialContent: partialText,
-              timestamp: new Date().toISOString(),
-            });
+              totalTokens,
+              streamToClient
+            );
+            break;
+          }
+
+          // ====================================================================
+          // 6. UNKNOWN MESSAGE TYPE - Log warning for unexpected types
+          // ====================================================================
+          default: {
+            const unknownMsg = message as SDKMessage;
+            this.handleUnknownMessage(unknownMsg, sessionId);
+            break;
           }
         }
-
-        // Catch-all for unknown message types
-        else {
-          this.logger.warn(`[${sessionId}] Unknown message type: ${(message as any).type}`);
-        }
-
       } catch (messageError) {
-        this.logger.error(`[${sessionId}] Error processing message:`, messageError);
+        this.logger.error(
+          `[${sessionId}] Error processing message:`,
+          messageError
+        );
         // Continue processing other messages
       }
     }
@@ -484,13 +482,297 @@ export class AgentService {
     return fullContent;
   }
 
+  /**
+   * Handle system initialization message
+   */
+  private handleSystemInitMessage(
+    initMessage: SDKSystemMessage,
+    sessionId: string,
+    ticker: string,
+    streamToClient: boolean
+  ): void {
+    this.logger.log(
+      `[${sessionId}] 🔧 System initialized - Model: ${initMessage.model}, Mode: ${initMessage.permissionMode}`
+    );
+    if (streamToClient) {
+      this.eventEmitter.emit(
+        createEventName(StreamEventType.SYSTEM, sessionId),
+        {
+          ticker,
+          model: initMessage.model,
+          permissionMode: initMessage.permissionMode,
+          timestamp: new Date().toISOString(),
+        }
+      );
+    }
+  }
+
+  /**
+   * Handle compact boundary message
+   */
+  private handleCompactBoundaryMessage(
+    compactMessage: SDKCompactBoundaryMessage,
+    sessionId: string,
+    ticker: string,
+    streamToClient: boolean
+  ): void {
+    const trigger = compactMessage.compact_metadata.trigger;
+    const preTokens = compactMessage.compact_metadata.pre_tokens;
+    this.logger.log(
+      `[${sessionId}] 📦 Conversation compacted - Trigger: ${trigger}, Pre-tokens: ${preTokens}`
+    );
+    if (streamToClient) {
+      this.eventEmitter.emit(
+        createEventName(StreamEventType.COMPACTION, sessionId),
+        {
+          ticker,
+          trigger,
+          messagesBefore: preTokens,
+          messagesAfter: 0,
+          timestamp: new Date().toISOString(),
+        }
+      );
+    }
+  }
+
+  /**
+   * Handle partial assistant message (streaming text chunks)
+   * Processes RawContentBlockDeltaEvent from Anthropic streaming API
+   */
+  private handlePartialAssistantMessage(
+    streamEvent: SDKPartialAssistantMessage,
+    sessionId: string,
+    ticker: string,
+    streamToClient: boolean
+  ): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const event = streamEvent.event as any;
+
+    // Handle different delta types according to RawContentBlockDeltaEvent spec
+    let partialText = '';
+    let deltaType = '';
+
+    if (event?.type === 'content_block_delta') {
+      const delta = event.delta;
+
+      if (delta?.type === 'text_delta') {
+        // TextDelta: { type: 'text_delta', text: string }
+        partialText = delta.text || '';
+        deltaType = 'text';
+      } else if (delta?.type === 'thinking_delta') {
+        // ThinkingDelta: { type: 'thinking_delta', thinking: string }
+        partialText = delta.thinking || '';
+        deltaType = 'thinking';
+      } else if (delta?.type === 'input_json_delta') {
+        // InputJsonDelta: { type: 'input_json_delta', partial_json: string }
+        partialText = delta.partial_json || '';
+        deltaType = 'tool_input';
+      }
+    } else {
+      // Fallback for other event types (legacy support)
+      partialText = event?.delta?.text || event?.text || '';
+      deltaType = 'unknown';
+    }
+
+    if (partialText) {
+      const preview = partialText.substring(0, 50).replace(/\n/g, ' ');
+      this.logger.log(
+        `[${sessionId}] 📝 Partial [${deltaType}] (${partialText.length} chars): "${preview}..."`
+      );
+    }
+
+    if (streamToClient && partialText) {
+      this.eventEmitter.emit(
+        createEventName(StreamEventType.PARTIAL, sessionId),
+        {
+          ticker,
+          partialContent: partialText,
+          deltaType,
+          timestamp: new Date().toISOString(),
+        }
+      );
+    }
+  }
+
+  /**
+   * Handle complete assistant message with content blocks
+   * Returns the text content accumulated from this message
+   */
+  private handleAssistantMessage(
+    assistantMessage: SDKAssistantMessage,
+    sessionId: string,
+    ticker: string,
+    phase: string,
+    streamToClient: boolean
+  ): string {
+    const apiMessage = assistantMessage.message;
+    let textContent = '';
+
+    // Process all content blocks
+    for (const block of apiMessage.content) {
+      if (block.type === 'text') {
+        textContent += block.text;
+      } else if (block.type === 'thinking') {
+        if (streamToClient) {
+          this.eventEmitter.emit(
+            createEventName(StreamEventType.THINKING, sessionId),
+            {
+              ticker,
+              message: block.thinking,
+              timestamp: new Date().toISOString(),
+            }
+          );
+        }
+      } else if (block.type === 'tool_use') {
+        if (streamToClient) {
+          this.eventEmitter.emit(
+            createEventName(StreamEventType.TOOL, sessionId),
+            {
+              ticker,
+              toolName: block.name,
+              toolId: block.id,
+              toolInput: block.input,
+              timestamp: new Date().toISOString(),
+            }
+          );
+        }
+      }
+    }
+
+    // Emit chunk event (only for conversation mode or if streamToClient is true)
+    if (streamToClient) {
+      this.eventEmitter.emit(
+        createEventName(StreamEventType.CHUNK, sessionId),
+        {
+          ticker,
+          content: textContent,
+          phase,
+          timestamp: new Date().toISOString(),
+        }
+      );
+    }
+
+    return textContent;
+  }
+
+  /**
+   * Handle user message (tool results)
+   */
+  private handleUserMessage(
+    userMessage: SDKUserMessage,
+    sessionId: string,
+    ticker: string,
+    streamToClient: boolean
+  ): void {
+    const apiMessage = userMessage.message;
+    const toolResults: Array<{
+      toolId: string;
+      toolName: string;
+      success: boolean;
+    }> = [];
+
+    for (const block of apiMessage.content) {
+      if (block.type === 'tool_result') {
+        const isError = block.is_error || false;
+
+        toolResults.push({
+          toolId: block.tool_use_id,
+          toolName: 'tool_result',
+          success: !isError,
+        });
+
+        if (streamToClient) {
+          this.eventEmitter.emit(
+            createEventName(StreamEventType.TOOL_RESULT, sessionId),
+            {
+              ticker,
+              toolId: block.tool_use_id,
+              timestamp: new Date().toISOString(),
+            }
+          );
+        }
+      }
+    }
+
+    // Log summary
+    if (toolResults.length > 0) {
+      this.logger.log(`[${sessionId}] 📥 Tool Results (${toolResults.length})`);
+      toolResults.forEach((r) => {
+        const status = r.success ? '✅' : '❌';
+        this.logger.log(
+          `[${sessionId}]    ${status} ${r.toolName} (${r.toolId})`
+        );
+      });
+    }
+  }
+
+  /**
+   * Handle result message (final conversation result)
+   */
+  private handleResultMessage(
+    resultMsg: SDKResultMessage,
+    sessionId: string,
+    ticker: string,
+    totalTokens: number,
+    streamToClient: boolean
+  ): void {
+    const isSuccess = resultMsg.subtype === 'success';
+    const executionTime = resultMsg.duration_ms || 0;
+    const cost = resultMsg.total_cost_usd || 0;
+
+    this.logger.log(
+      `[${sessionId}] 🏁 Result - ${isSuccess ? 'Success' : 'Error'}`
+    );
+    this.logger.log(`[${sessionId}]    ⏱️  Duration: ${executionTime}ms`);
+    if (cost > 0) {
+      this.logger.log(`[${sessionId}]    💰 Cost: $${cost.toFixed(4)}`);
+    }
+    this.logger.log(`[${sessionId}]    📊 Total Tokens: ${totalTokens}`);
+
+    if (streamToClient) {
+      this.eventEmitter.emit(
+        createEventName(StreamEventType.RESULT, sessionId),
+        {
+          ticker,
+          success: isSuccess,
+          executionTime,
+          cost,
+          totalTokens,
+          timestamp: new Date().toISOString(),
+        }
+      );
+    }
+  }
+
+  /**
+   * Handle unknown message type
+   */
+  private handleUnknownMessage(
+    unknownMsg: SDKMessage,
+    sessionId: string
+  ): void {
+    this.logger.warn(
+      `[${sessionId}] ⚠️  Unknown message type: ${unknownMsg.type}`
+    );
+    this.logger.debug(
+      `[${sessionId}] Full unknown message: ${JSON.stringify(
+        unknownMsg,
+        null,
+        2
+      )}`
+    );
+  }
+
   // Helper to convert JSON Schema to Zod schema (preserved from original)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private convertToZodSchema(jsonSchema: any): any {
     const properties = jsonSchema.properties || {};
     const required = jsonSchema.required || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const zodShape: any = {};
 
     for (const [key, value] of Object.entries(properties)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const prop = value as any;
 
       if (prop.type === 'array' && prop.items) {
@@ -501,19 +783,28 @@ export class AgentService {
             ? z.array(z.enum(enumValues))
             : z.array(z.enum(enumValues)).optional();
         } else if (itemSchema.type === 'number') {
-          zodShape[key] = required.includes(key) ? z.array(z.number()) : z.array(z.number()).optional();
+          zodShape[key] = required.includes(key)
+            ? z.array(z.number())
+            : z.array(z.number()).optional();
         } else {
-          zodShape[key] = required.includes(key) ? z.array(z.any()) : z.array(z.any()).optional();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          zodShape[key] = required.includes(key)
+            ? z.array(z.any())
+            : z.array(z.any()).optional();
         }
-      }
-      else if (prop.type === 'string' && prop.enum && Array.isArray(prop.enum)) {
+      } else if (
+        prop.type === 'string' &&
+        prop.enum &&
+        Array.isArray(prop.enum)
+      ) {
         const enumValues = prop.enum as [string, ...string[]];
         zodShape[key] = required.includes(key)
           ? z.enum(enumValues)
           : z.enum(enumValues).optional();
-      }
-      else if (prop.type === 'string') {
-        zodShape[key] = required.includes(key) ? z.string() : z.string().optional();
+      } else if (prop.type === 'string') {
+        zodShape[key] = required.includes(key)
+          ? z.string()
+          : z.string().optional();
       } else if (prop.type === 'number') {
         let numberSchema = z.number();
         if (typeof prop.minimum === 'number') {
@@ -522,9 +813,13 @@ export class AgentService {
         if (typeof prop.maximum === 'number') {
           numberSchema = numberSchema.max(prop.maximum);
         }
-        zodShape[key] = required.includes(key) ? numberSchema : numberSchema.optional();
+        zodShape[key] = required.includes(key)
+          ? numberSchema
+          : numberSchema.optional();
       } else if (prop.type === 'object') {
-        zodShape[key] = required.includes(key) ? z.object({}).passthrough() : z.object({}).passthrough().optional();
+        zodShape[key] = required.includes(key)
+          ? z.object({}).passthrough()
+          : z.object({}).passthrough().optional();
       }
     }
 
