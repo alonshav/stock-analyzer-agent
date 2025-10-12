@@ -550,7 +550,7 @@ export class AgentService {
 
     // Handle different delta types according to RawContentBlockDeltaEvent spec
     let partialText = '';
-    let deltaType = '';
+    let deltaType: 'text' | 'thinking' | 'tool_input' | 'unknown' = 'unknown';
 
     if (event?.type === 'content_block_delta') {
       const delta = event.delta;

@@ -88,16 +88,11 @@ export class TelegramBotService implements OnApplicationBootstrap {
     try {
       await ctx.sendChatAction('typing');
 
-      const initialMsg = await ctx.reply(
-        `Analyzing ${ticker}...`
-      );
-
       // Start streaming from Agent service
       await this.streamManager.startStream({
         chatId,
         ticker,
         ctx,
-        messageId: initialMsg.message_id,
         agentUrl: this.agentUrl,
       });
     } catch (error) {
@@ -169,7 +164,6 @@ export class TelegramBotService implements OnApplicationBootstrap {
         chatId,
         message,
         ctx,
-        messageId: initialMsg.message_id,
         agentUrl: this.agentUrl,
       });
     } catch (error) {

@@ -4,7 +4,7 @@
  * This system prompt guides the AI agent in performing comprehensive stock analysis
  * using a structured 6-phase approach.
  */
-export const STOCK_VALUATION_FRAMEWORK = ` Quickly Analyze the given stock based on the financial data given. Make the analysis 5 sentences long.
+export const STOCK_VALUATION_FRAMEWORK = ` Quickly Analyze the given stock based on the financial data given. Make the analysis 5 sentences long, have the final report/analysis be presented in rich marckdown text, very nicely.
 `
 
 // export const STOCK_VALUATION_FRAMEWORK = `# Stock Valuation Assessment Framework v2.3

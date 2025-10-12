@@ -2,8 +2,24 @@ import { Controller, Get, Param, Query, Res, Req, Logger } from '@nestjs/common'
 import { Response, Request } from 'express';
 import { StreamService } from '@stock-analyzer/agent/core';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { StreamResponse } from './dto/analysis.dto';
-import { createEventName, StreamEventType, FRAMEWORK_VERSION } from '@stock-analyzer/shared/types';
+import {
+  createEventName,
+  StreamEventType,
+  FRAMEWORK_VERSION,
+  StreamEventPayload,
+  ChunkEvent,
+  ToolEvent,
+  ThinkingEvent,
+  ToolResultEvent,
+  PDFEvent,
+  ResultEvent,
+  SystemEvent,
+  CompactionEvent,
+  PartialEvent,
+  CompleteEvent,
+  ErrorEvent,
+  ConnectedEvent,
+} from '@stock-analyzer/shared/types';
 
 @Controller('api/analyze')
 export class SSEController {
@@ -44,90 +60,92 @@ export class SSEController {
       });
 
       // Send connection event
-      const connectionResponse: StreamResponse = {
+      const connectionResponse: ConnectedEvent = {
         type: StreamEventType.CONNECTED,
         streamId,
         ticker: ticker.toUpperCase(),
+        timestamp: new Date().toISOString(),
       };
       res.write(`data: ${JSON.stringify(connectionResponse)}\n\n`);
 
-      // Event listeners
-      const chunkListener = (data: any) => {
-        const chunkResponse: StreamResponse = {
+      // Event listeners with proper types
+      const chunkListener = (data: Omit<ChunkEvent, 'type'>) => {
+        const chunkResponse: ChunkEvent = {
           type: StreamEventType.CHUNK,
           ...data,
         };
         res.write(`data: ${JSON.stringify(chunkResponse)}\n\n`);
       };
 
-      const toolListener = (data: any) => {
-        const toolResponse: StreamResponse = {
+      const toolListener = (data: Omit<ToolEvent, 'type'>) => {
+        const toolResponse: ToolEvent = {
           type: StreamEventType.TOOL,
           ...data,
         };
         res.write(`data: ${JSON.stringify(toolResponse)}\n\n`);
       };
 
-      const thinkingListener = (data: any) => {
-        const thinkingResponse: StreamResponse = {
+      const thinkingListener = (data: Omit<ThinkingEvent, 'type'>) => {
+        const thinkingResponse: ThinkingEvent = {
           type: StreamEventType.THINKING,
           ...data,
         };
         res.write(`data: ${JSON.stringify(thinkingResponse)}\n\n`);
       };
 
-      const toolResultListener = (data: any) => {
-        const toolResultResponse: StreamResponse = {
+      const toolResultListener = (data: Omit<ToolResultEvent, 'type'>) => {
+        const toolResultResponse: ToolResultEvent = {
           type: StreamEventType.TOOL_RESULT,
           ...data,
         };
         res.write(`data: ${JSON.stringify(toolResultResponse)}\n\n`);
       };
 
-      const pdfListener = (data: any) => {
-        const pdfResponse: StreamResponse = {
+      const pdfListener = (data: Omit<PDFEvent, 'type'>) => {
+        const pdfResponse: PDFEvent = {
           type: StreamEventType.PDF,
           ...data,
         };
         res.write(`data: ${JSON.stringify(pdfResponse)}\n\n`);
       };
 
-      const resultListener = (data: any) => {
-        const resultResponse: StreamResponse = {
+      const resultListener = (data: Omit<ResultEvent, 'type'>) => {
+        const resultResponse: ResultEvent = {
           type: StreamEventType.RESULT,
           ...data,
         };
         res.write(`data: ${JSON.stringify(resultResponse)}\n\n`);
       };
 
-      const systemListener = (data: any) => {
-        const systemResponse: StreamResponse = {
+      const systemListener = (data: Omit<SystemEvent, 'type'>) => {
+        const systemResponse: SystemEvent = {
           type: StreamEventType.SYSTEM,
           ...data,
         };
         res.write(`data: ${JSON.stringify(systemResponse)}\n\n`);
       };
 
-      const compactionListener = (data: any) => {
-        const compactionResponse: StreamResponse = {
+      const compactionListener = (data: Omit<CompactionEvent, 'type'>) => {
+        const compactionResponse: CompactionEvent = {
           type: StreamEventType.COMPACTION,
           ...data,
         };
         res.write(`data: ${JSON.stringify(compactionResponse)}\n\n`);
       };
 
-      const partialListener = (data: any) => {
-        const partialResponse: StreamResponse = {
+      const partialListener = (data: Omit<PartialEvent, 'type'>) => {
+        const partialResponse: PartialEvent = {
           type: StreamEventType.PARTIAL,
           ...data,
         };
         res.write(`data: ${JSON.stringify(partialResponse)}\n\n`);
       };
 
-      const completeListener = (data: any) => {
-        const completeResponse: StreamResponse = {
+      const completeListener = (data: Omit<CompleteEvent, 'type'>) => {
+        const completeResponse: CompleteEvent = {
           type: StreamEventType.COMPLETE,
           ticker: data.ticker,
+          timestamp: data.timestamp,
           metadata: data.metadata,
           // Don't send executiveSummary - already streamed as chunks
         };
@@ -135,8 +153,8 @@ export class SSEController {
         res.end();
       };
 
-      const errorListener = (data: any) => {
-        const errorResponse: StreamResponse = {
+      const errorListener = (data: Omit<ErrorEvent, 'type'>) => {
+        const errorResponse: ErrorEvent = {
           type: StreamEventType.ERROR,
           message: data.message,
           timestamp: data.timestamp,
@@ -177,7 +195,7 @@ export class SSEController {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('SSE error:', errorMessage);
-      const errorResponse: StreamResponse = {
+      const errorResponse: ErrorEvent = {
         type: StreamEventType.ERROR,
         message: errorMessage,
         timestamp: new Date().toISOString(),
@@ -224,90 +242,92 @@ export class SSEController {
       });
 
       // Send connection event
-      const connectionResponse: StreamResponse = {
+      const connectionResponse: ConnectedEvent = {
         type: StreamEventType.CONNECTED,
         streamId,
         ticker: chatId, // Use chatId as ticker for conversation mode
+        timestamp: new Date().toISOString(),
       };
       res.write(`data: ${JSON.stringify(connectionResponse)}\n\n`);
 
-      // Event listeners (same as analysis stream)
-      const chunkListener = (data: any) => {
-        const chunkResponse: StreamResponse = {
+      // Event listeners with proper types (same as analysis stream)
+      const chunkListener = (data: Omit<ChunkEvent, 'type'>) => {
+        const chunkResponse: ChunkEvent = {
           type: StreamEventType.CHUNK,
           ...data,
         };
         res.write(`data: ${JSON.stringify(chunkResponse)}\n\n`);
       };
 
-      const thinkingListener = (data: any) => {
-        const thinkingResponse: StreamResponse = {
+      const thinkingListener = (data: Omit<ThinkingEvent, 'type'>) => {
+        const thinkingResponse: ThinkingEvent = {
           type: StreamEventType.THINKING,
           ...data,
         };
         res.write(`data: ${JSON.stringify(thinkingResponse)}\n\n`);
       };
 
-      const toolListener = (data: any) => {
-        const toolResponse: StreamResponse = {
+      const toolListener = (data: Omit<ToolEvent, 'type'>) => {
+        const toolResponse: ToolEvent = {
           type: StreamEventType.TOOL,
           ...data,
         };
         res.write(`data: ${JSON.stringify(toolResponse)}\n\n`);
       };
 
-      const toolResultListener = (data: any) => {
-        const toolResultResponse: StreamResponse = {
+      const toolResultListener = (data: Omit<ToolResultEvent, 'type'>) => {
+        const toolResultResponse: ToolResultEvent = {
           type: StreamEventType.TOOL_RESULT,
           ...data,
         };
         res.write(`data: ${JSON.stringify(toolResultResponse)}\n\n`);
       };
 
-      const resultListener = (data: any) => {
-        const resultResponse: StreamResponse = {
+      const resultListener = (data: Omit<ResultEvent, 'type'>) => {
+        const resultResponse: ResultEvent = {
           type: StreamEventType.RESULT,
           ...data,
         };
         res.write(`data: ${JSON.stringify(resultResponse)}\n\n`);
       };
 
-      const systemListener = (data: any) => {
-        const systemResponse: StreamResponse = {
+      const systemListener = (data: Omit<SystemEvent, 'type'>) => {
+        const systemResponse: SystemEvent = {
           type: StreamEventType.SYSTEM,
           ...data,
         };
         res.write(`data: ${JSON.stringify(systemResponse)}\n\n`);
       };
 
-      const compactionListener = (data: any) => {
-        const compactionResponse: StreamResponse = {
+      const compactionListener = (data: Omit<CompactionEvent, 'type'>) => {
+        const compactionResponse: CompactionEvent = {
           type: StreamEventType.COMPACTION,
           ...data,
         };
         res.write(`data: ${JSON.stringify(compactionResponse)}\n\n`);
       };
 
-      const partialListener = (data: any) => {
-        const partialResponse: StreamResponse = {
+      const partialListener = (data: Omit<PartialEvent, 'type'>) => {
+        const partialResponse: PartialEvent = {
           type: StreamEventType.PARTIAL,
           ...data,
         };
         res.write(`data: ${JSON.stringify(partialResponse)}\n\n`);
       };
 
-      const completeListener = (data: any) => {
-        const completeResponse: StreamResponse = {
+      const completeListener = (data: Omit<CompleteEvent, 'type'>) => {
+        const completeResponse: CompleteEvent = {
           type: StreamEventType.COMPLETE,
           ticker: data.ticker || chatId,
+          timestamp: data.timestamp,
           metadata: data.metadata,
         };
         res.write(`data: ${JSON.stringify(completeResponse)}\n\n`);
         res.end();
       };
 
-      const errorListener = (data: any) => {
-        const errorResponse: StreamResponse = {
+      const errorListener = (data: Omit<ErrorEvent, 'type'>) => {
+        const errorResponse: ErrorEvent = {
           type: StreamEventType.ERROR,
           message: data.message,
           timestamp: data.timestamp,
@@ -346,7 +366,7 @@ export class SSEController {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Conversation SSE error:', errorMessage);
-      const errorResponse: StreamResponse = {
+      const errorResponse: ErrorEvent = {
         type: StreamEventType.ERROR,
         message: errorMessage,
         timestamp: new Date().toISOString(),
