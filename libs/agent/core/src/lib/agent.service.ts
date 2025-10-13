@@ -67,6 +67,14 @@ export interface ExecuteQueryParams {
   streamToClient: boolean;
 }
 
+interface ToolResultData {
+  toolId: string;
+  toolName: string;
+  success: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  block: any; // The raw tool_result block
+}
+
 @Injectable()
 export class AgentService {
   private readonly logger = new Logger(AgentService.name);
@@ -672,57 +680,87 @@ export class AgentService {
     streamToClient: boolean
   ): void {
     const apiMessage = userMessage.message;
-    const toolResults: Array<{
-      toolId: string;
-      toolName: string;
-      success: boolean;
-    }> = [];
+
+    // Extract all tool results from content blocks
+    const toolResults = this.extractToolResults(apiMessage);
 
     // Process each tool result
-    for (const block of apiMessage.content) {
-      if (block.type === 'tool_result') {
-        const isError = block.is_error || false;
-        const toolUseId = block.tool_use_id;
-        const toolName = this.toolUseIdToName.get(toolUseId) || 'unknown';
-
-        toolResults.push({
-          toolId: toolUseId,
-          toolName,
-          success: !isError,
-        });
-
-        // Process tool-specific results
-        if (streamToClient && !isError) {
-          this.processToolResult(toolName, block, sessionId, ticker);
-        }
-
-        // Emit generic tool result event
-        if (streamToClient) {
-          this.eventEmitter.emit(
-            createEventName(StreamEventType.TOOL_RESULT, sessionId),
-            {
-              ticker,
-              toolId: toolUseId,
-              timestamp: new Date().toISOString(),
-            }
-          );
-        }
-
-        // Clean up tracking map
-        this.toolUseIdToName.delete(toolUseId);
-      }
+    for (const result of toolResults) {
+      this.processToolResultBlock(result, sessionId, ticker, streamToClient);
     }
 
     // Log summary
-    if (toolResults.length > 0) {
-      this.logger.log(`[${sessionId}] 📥 Tool Results (${toolResults.length})`);
-      toolResults.forEach((r) => {
-        const status = r.success ? '✅' : '❌';
-        this.logger.log(
-          `[${sessionId}]    ${status} ${r.toolName} (${r.toolId})`
-        );
-      });
+    this.logToolResultsSummary(toolResults, sessionId);
+  }
+
+  /**
+   * Extract tool results from message content blocks
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private extractToolResults(apiMessage: any): ToolResultData[] {
+    const results: ToolResultData[] = [];
+
+    for (const block of apiMessage.content) {
+      if (block.type === 'tool_result') {
+        const toolName = this.toolUseIdToName.get(block.tool_use_id) || 'unknown';
+        results.push({
+          toolId: block.tool_use_id,
+          toolName,
+          success: !(block.is_error || false),
+          block,
+        });
+      }
     }
+
+    return results;
+  }
+
+  /**
+   * Process a single tool result: handle tool-specific logic, emit events, clean up
+   */
+  private processToolResultBlock(
+    result: ToolResultData,
+    sessionId: string,
+    ticker: string,
+    streamToClient: boolean
+  ): void {
+    // Process tool-specific results (e.g., PDF generation)
+    if (streamToClient && result.success) {
+      this.processToolResult(result.toolName, result.block, sessionId, ticker);
+    }
+
+    // Emit generic tool result event
+    if (streamToClient) {
+      this.eventEmitter.emit(
+        createEventName(StreamEventType.TOOL_RESULT, sessionId),
+        {
+          ticker,
+          toolId: result.toolId,
+          timestamp: new Date().toISOString(),
+        }
+      );
+    }
+
+    // Clean up tracking map
+    this.toolUseIdToName.delete(result.toolId);
+  }
+
+  /**
+   * Log summary of all tool results
+   */
+  private logToolResultsSummary(
+    results: ToolResultData[],
+    sessionId: string
+  ): void {
+    if (results.length === 0) return;
+
+    this.logger.log(`[${sessionId}] 📥 Tool Results (${results.length})`);
+    results.forEach((r) => {
+      const status = r.success ? '✅' : '❌';
+      this.logger.log(
+        `[${sessionId}]    ${status} ${r.toolName} (${r.toolId})`
+      );
+    });
   }
 
   /**
