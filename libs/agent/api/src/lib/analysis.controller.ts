@@ -64,7 +64,8 @@ export class AnalysisController {
       `[${sessionId}] Starting workflow ${workflowType} for ${ticker} with SSE streaming`
     );
 
-    // Set SSE headers
+    // Set SSE status and headers (MUST be 200, not 201, for EventSource compatibility)
+    res.status(200);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');

@@ -10,6 +10,7 @@ import { StreamEventType } from './enums';
 // ============================================================================
 
 interface BaseEvent {
+  sessionId: string;
   ticker: string;
   timestamp: string;
 }
@@ -20,7 +21,7 @@ interface BaseEvent {
 
 export interface ConnectedEvent extends BaseEvent {
   type: StreamEventType.CONNECTED;
-  streamId: string;
+  workflowType: string;
 }
 
 // ============================================================================
@@ -132,6 +133,7 @@ export interface CompleteEvent extends BaseEvent {
 
 export interface ErrorEvent {
   type: StreamEventType.ERROR;
+  sessionId?: string;
   message: string;
   timestamp: string;
 }

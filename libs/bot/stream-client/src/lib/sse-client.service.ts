@@ -48,26 +48,52 @@ export class SSEClientService extends EventEmitter {
 
   /**
    * Connect to SSE endpoint
+   *
+   * Uses custom fetch implementation to support POST requests with body.
+   * EventSource v4 supports this via the fetch option in constructor.
    */
   connect(config: SSEClientConfig): void {
     if (this.eventSource) {
       throw new Error('Already connected. Call disconnect() first.');
     }
 
+    console.log(`[SSEClientService] Connecting to ${config.url}`);
+    console.log(`[SSEClientService] Method: ${config.method}, Body length: ${config.body?.length}`);
+
+    // EventSource v4 supports custom fetch implementation for POST requests
     const eventSource = new EventSource(config.url, {
-      method: config.method || 'GET',
-      headers: config.headers || {},
-      body: config.body,
-    } as any);
+      fetch: (input, init) => {
+        console.log(`[SSEClientService] Custom fetch called with input:`, input);
+        console.log(`[SSEClientService] Init headers:`, init?.headers);
+        const fetchConfig = {
+          ...init,
+          method: config.method || 'GET',
+          headers: {
+            ...init?.headers,
+            ...config.headers,
+          },
+          body: config.body,
+        };
+        console.log(`[SSEClientService] Fetch config:`, { method: fetchConfig.method, headers: fetchConfig.headers, bodyLength: fetchConfig.body?.length });
+        return fetch(input, fetchConfig);
+      },
+    });
 
     this.eventSource = eventSource;
 
+    // Handle connection open
+    eventSource.addEventListener('open', () => {
+      console.log(`[SSEClientService] Connection opened, readyState: ${eventSource.readyState}`);
+    });
+
     // Handle incoming messages
     eventSource.onmessage = (event: MessageEvent) => {
+      console.log(`[SSEClientService] Message received:`, event.data.substring(0, 200));
       try {
-        const parsedEvent: SSEEvent = JSON.parse(event.data);
+        const parsedEvent: any = JSON.parse(event.data);
         this.emit('message', parsedEvent);
-        this.emit(parsedEvent.type, parsedEvent.data);
+        // Emit the entire parsed event (it contains type, sessionId, ticker, etc.)
+        this.emit(parsedEvent.type, parsedEvent);
       } catch (error) {
         this.emit('error', new Error(`Failed to parse SSE message: ${error}`));
       }
@@ -75,6 +101,9 @@ export class SSEClientService extends EventEmitter {
 
     // Handle errors
     eventSource.onerror = (error: any) => {
+      console.log(`[SSEClientService] Error occurred:`, error);
+      console.log(`[SSEClientService] ReadyState: ${eventSource.readyState}, CONNECTING: ${EventSource.CONNECTING}, OPEN: ${EventSource.OPEN}, CLOSED: ${EventSource.CLOSED}`);
+
       if (eventSource.readyState === EventSource.CLOSED) {
         this.emit('close');
       } else {

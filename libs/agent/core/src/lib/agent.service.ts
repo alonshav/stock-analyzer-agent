@@ -27,7 +27,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createToolRegistry } from '@stock-analyzer/mcp/tools';
 import { z } from 'zod';
 import {
-  createEventName,
   StreamEventType,
   ToolName,
   isToolName,
@@ -193,14 +192,13 @@ export class AgentService {
       };
 
       // Emit completion event
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.COMPLETE, sessionId),
-        {
-          ticker,
-          timestamp: result.timestamp,
-          metadata: result.metadata,
-        }
-      );
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.COMPLETE,
+        sessionId,
+        ticker,
+        timestamp: result.timestamp,
+        metadata: result.metadata,
+      });
 
       this.logger.log(
         `[${sessionId}] Workflow complete for ${ticker} (${duration}ms)`
@@ -210,14 +208,12 @@ export class AgentService {
       this.logger.error(`[${sessionId}] Workflow failed:`, error);
 
       // Emit error event
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.ERROR, sessionId),
-        {
-          ticker,
-          message: error instanceof Error ? error.message : 'Unknown error',
-          timestamp: new Date().toISOString(),
-        }
-      );
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.ERROR,
+        sessionId,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      });
 
       throw error;
     }
@@ -444,15 +440,14 @@ export class AgentService {
       `[${sessionId}] 🔧 System initialized - Model: ${initMessage.model}, Mode: ${initMessage.permissionMode}`
     );
     if (streamToClient) {
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.SYSTEM, sessionId),
-        {
-          ticker,
-          model: initMessage.model,
-          permissionMode: initMessage.permissionMode,
-          timestamp: new Date().toISOString(),
-        }
-      );
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.SYSTEM,
+        sessionId,
+        ticker,
+        model: initMessage.model,
+        permissionMode: initMessage.permissionMode,
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 
@@ -471,16 +466,15 @@ export class AgentService {
       `[${sessionId}] 📦 Conversation compacted - Trigger: ${trigger}, Pre-tokens: ${preTokens}`
     );
     if (streamToClient) {
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.COMPACTION, sessionId),
-        {
-          ticker,
-          trigger,
-          messagesBefore: preTokens,
-          messagesAfter: 0,
-          timestamp: new Date().toISOString(),
-        }
-      );
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.COMPACTION,
+        sessionId,
+        ticker,
+        trigger,
+        messagesBefore: preTokens,
+        messagesAfter: 0,
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 
@@ -531,15 +525,14 @@ export class AgentService {
     }
 
     if (streamToClient && partialText) {
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.PARTIAL, sessionId),
-        {
-          ticker,
-          partialContent: partialText,
-          deltaType,
-          timestamp: new Date().toISOString(),
-        }
-      );
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.PARTIAL,
+        sessionId,
+        ticker,
+        partialContent: partialText,
+        deltaType,
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 
@@ -563,45 +556,42 @@ export class AgentService {
         textContent += block.text;
       } else if (block.type === 'thinking') {
         if (streamToClient) {
-          this.eventEmitter.emit(
-            createEventName(StreamEventType.THINKING, sessionId),
-            {
-              ticker,
-              message: block.thinking,
-              timestamp: new Date().toISOString(),
-            }
-          );
+          this.eventEmitter.emit(`stream.${sessionId}`, {
+            type: StreamEventType.THINKING,
+            sessionId,
+            ticker,
+            message: block.thinking,
+            timestamp: new Date().toISOString(),
+          });
         }
       } else if (block.type === 'tool_use') {
         // Track tool use ID to name mapping for later retrieval
         this.toolUseIdToName.set(block.id, block.name);
 
         if (streamToClient) {
-          this.eventEmitter.emit(
-            createEventName(StreamEventType.TOOL, sessionId),
-            {
-              ticker,
-              toolName: block.name,
-              toolId: block.id,
-              toolInput: block.input,
-              timestamp: new Date().toISOString(),
-            }
-          );
+          this.eventEmitter.emit(`stream.${sessionId}`, {
+            type: StreamEventType.TOOL,
+            sessionId,
+            ticker,
+            toolName: block.name,
+            toolId: block.id,
+            toolInput: block.input,
+            timestamp: new Date().toISOString(),
+          });
         }
       }
     }
 
     // Emit chunk event
     if (streamToClient) {
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.CHUNK, sessionId),
-        {
-          ticker,
-          content: textContent,
-          workflowType,
-          timestamp: new Date().toISOString(),
-        }
-      );
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.CHUNK,
+        sessionId,
+        ticker,
+        content: textContent,
+        phase: workflowType,
+        timestamp: new Date().toISOString(),
+      });
     }
 
     return textContent;
@@ -640,7 +630,8 @@ export class AgentService {
 
     for (const block of apiMessage.content) {
       if (block.type === 'tool_result') {
-        const toolName = this.toolUseIdToName.get(block.tool_use_id) || 'unknown';
+        const toolName =
+          this.toolUseIdToName.get(block.tool_use_id) || 'unknown';
         results.push({
           toolId: block.tool_use_id,
           toolName,
@@ -669,14 +660,13 @@ export class AgentService {
 
     // Emit generic tool result event
     if (streamToClient) {
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.TOOL_RESULT, sessionId),
-        {
-          ticker,
-          toolId: result.toolId,
-          timestamp: new Date().toISOString(),
-        }
-      );
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.TOOL_RESULT,
+        sessionId,
+        ticker,
+        toolId: result.toolId,
+        timestamp: new Date().toISOString(),
+      });
     }
 
     // Clean up tracking map
@@ -784,12 +774,13 @@ export class AgentService {
       } bytes, Type: ${toolResultData.reportType || 'unknown'}`
     );
 
-    this.eventEmitter.emit(createEventName(StreamEventType.PDF, sessionId), {
+    this.eventEmitter.emit(`stream.${sessionId}`, {
+      type: StreamEventType.PDF,
+      sessionId,
       ticker,
       pdfBase64: toolResultData.pdfBase64,
       fileSize: toolResultData.fileSize,
       reportType: toolResultData.reportType,
-      provider: toolResultData.provider,
       timestamp: new Date().toISOString(),
     });
   }
@@ -818,17 +809,16 @@ export class AgentService {
     this.logger.log(`[${sessionId}]    📊 Total Tokens: ${totalTokens}`);
 
     if (streamToClient) {
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.RESULT, sessionId),
-        {
-          ticker,
-          success: isSuccess,
-          executionTime,
-          cost,
-          totalTokens,
-          timestamp: new Date().toISOString(),
-        }
-      );
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.RESULT,
+        sessionId,
+        ticker,
+        success: isSuccess,
+        executionTime,
+        cost,
+        totalTokens,
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 

@@ -158,7 +158,7 @@ export const TelegramLimits = {
 // ============================================================================
 
 export const createEventName = (type: StreamEventType, sessionId: string): string => {
-  return `analysis.${type}.${sessionId}`;
+  return `stream.${sessionId}`;
 };
 
 // Helper to check if a tool name matches (handles both MCP-prefixed and plain names)

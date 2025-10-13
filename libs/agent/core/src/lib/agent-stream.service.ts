@@ -119,17 +119,25 @@ export class AgentStreamService implements OnModuleDestroy {
    */
   private setupEventListeners(): void {
     // Create listener function and store reference
-    const analysisListener = (sessionId: string, payload: StreamEventPayload) => {
+    // Event pattern: stream.{sessionId}
+    // Payload contains sessionId, ticker, type, and event-specific data
+    const streamListener = (payload: StreamEventPayload) => {
+      // Extract sessionId from payload (all events have it via BaseEvent or directly)
+      const sessionId = 'sessionId' in payload ? payload.sessionId : undefined;
+      if (!sessionId) {
+        this.logger.warn(`Event received without sessionId: ${payload.type}`);
+        return;
+      }
       this.forwardEventToClient(sessionId, payload);
     };
 
-    // Register listener
-    this.eventEmitter.on('analysis.*', analysisListener);
+    // Register listener for stream.* pattern (all stream events)
+    this.eventEmitter.on('stream.*', streamListener);
 
     // Store reference for cleanup
     this.eventListeners.push({
-      event: 'analysis.*',
-      listener: analysisListener,
+      event: 'stream.*',
+      listener: streamListener,
     });
 
     this.logger.debug('Event listeners registered');
@@ -146,6 +154,7 @@ export class AgentStreamService implements OnModuleDestroy {
     }
 
     try {
+      // Payload already includes type field from agent.service
       const eventData = JSON.stringify(payload);
       res.write(`data: ${eventData}\n\n`);
       this.logger.debug(`[${sessionId}] Forwarded event: ${payload.type}`);
