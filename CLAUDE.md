@@ -880,3 +880,4 @@ else if (isToolName(toolName, ToolName.MY_NEW_TOOL)) {
 - **Log separately** - Keep logging code separate from business logic
 - **Use type-safe helpers** - Leverage `isToolName()` for matching
 - **Emit events consistently** - Use `createEventName()` for all events
+- when you run unit tests run them with -watch=false
