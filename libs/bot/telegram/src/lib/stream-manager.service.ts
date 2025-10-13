@@ -434,37 +434,116 @@ export class StreamManagerService {
    * Convert Claude's Markdown to Telegram MarkdownV2
    * Claude uses: ## headings, **bold**, *italic*, [text](url)
    * MarkdownV2 uses: *bold* _italic_ [text](url) with escaped special chars
-   * Note: MarkdownV2 doesn't support headings, so we convert them to bold
+   *
+   * Strategy:
+   * - Keep headings and convert to bold (visual hierarchy)
+   * - Strip bold from long paragraphs (>150 chars = body text, not formatting)
+   * - Keep short bold spans (<150 chars = intentional emphasis)
    */
   private escapeMarkdownV2(text: string): string {
-    // Step 1: Convert headings to bold, stripping any nested markdown first
-    text = text.replace(/^#{1,6}\s+(.+?)$/gm, (_match, content) => {
-      // Strip **bold** and *italic* from heading content
-      const stripped = content.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
-      return `XBOLDX${stripped}XBOLDENDX`;
+    this.logger.log('========== MARKDOWN CONVERSION START ==========');
+    this.logger.log('ORIGINAL INPUT:');
+    this.logger.log(text);
+    this.logger.log('---');
+
+    // Step 1: Preserve links [text](url) - must be done first to protect URLs
+    const links: Array<{ text: string; url: string }> = [];
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, linkText, url) => {
+      links.push({ text: linkText, url });
+      this.logger.log(`[STEP 1] Found link: [${linkText}](${url})`);
+      return `XLINK${links.length - 1}X`;
     });
+    this.logger.log(`[STEP 1] After link preservation (${links.length} links found):`);
+    this.logger.log(text);
+    this.logger.log('---');
 
-    // Step 2: Convert Claude's **bold** to placeholder
-    text = text.replace(/\*\*(.+?)\*\*/g, 'XBOLDX$1XBOLDENDX');
+    // Step 2: Convert headings to bold (process line by line)
+    const lines = text.split('\n');
+    const processedLines = lines.map((line, index) => {
+      const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+      if (headingMatch) {
+        const content = headingMatch[2];
+        this.logger.log(`[STEP 2] Found heading on line ${index + 1}: "${line}"`);
+        // Strip any existing markdown from heading content
+        const stripped = content
+          .replace(/\*\*([^*]+)\*\*/g, '$1')  // Remove bold
+          .replace(/\*([^*]+)\*/g, '$1')      // Remove italic
+          .replace(/_([^_]+)_/g, '$1');       // Remove underscores
+        this.logger.log(`[STEP 2] Heading stripped to: "${stripped}"`);
+        return `XBOLDX${stripped}XBOLDENDX`;
+      }
+      return line;
+    });
+    text = processedLines.join('\n');
+    this.logger.log('[STEP 2] After heading conversion:');
+    this.logger.log(text);
+    this.logger.log('---');
 
-    // Step 3: Convert Claude's *italic* to placeholder (after bold conversion)
-    text = text.replace(/\*(.+?)\*/g, 'XITALICX$1XITALICENDX');
+    // Step 3: Handle **bold** - strip paragraph-bold (>150 chars), keep short bold
+    let boldKept = 0;
+    let boldStripped = 0;
+    const PARAGRAPH_THRESHOLD = 150;
 
-    // Step 4: Preserve links [text](url)
-    text = text.replace(/\[(.+?)\]\((.+?)\)/g, 'XLINKX$1XURLX$2XLINKENDX');
+    text = text.replace(/\*\*([^*]+?)\*\*/g, (match, content) => {
+      // If bold span is long (>150 chars), it's a paragraph → strip bold
+      if (content.length > PARAGRAPH_THRESHOLD) {
+        boldStripped++;
+        this.logger.log(`[STEP 3] Stripping paragraph-bold (${content.length} chars): "${content.substring(0, 50)}..."`);
+        return content; // Just return content without bold markers
+      } else {
+        boldKept++;
+        this.logger.log(`[STEP 3] Keeping short bold (${content.length} chars): "**${content}**"`);
+        return `XBOLDX${content}XBOLDENDX`;
+      }
+    });
+    this.logger.log(`[STEP 3] Bold processing: ${boldKept} kept, ${boldStripped} stripped`);
+    this.logger.log(text);
+    this.logger.log('---');
+
+    // Step 4: Convert *italic* to placeholder
+    let italicCount = 0;
+    text = text.replace(/\*([^*]+?)\*/g, (match, content) => {
+      italicCount++;
+      this.logger.log(`[STEP 4] Found italic #${italicCount}: "*${content}*"`);
+      return `XITALICX${content}XITALICENDX`;
+    });
+    this.logger.log(`[STEP 4] After italic conversion (${italicCount} found):`);
+    this.logger.log(text);
+    this.logger.log('---');
 
     // Step 5: Escape all special MarkdownV2 characters
-    // Characters that need escaping: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    // Characters that need escaping: _ * [ ] ( ) ~ ` > # + - = | { } . ! \
+    this.logger.log('[STEP 5] Escaping special characters...');
     text = text.replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
+    this.logger.log('[STEP 5] After escaping:');
+    this.logger.log(text.substring(0, 500) + (text.length > 500 ? '...' : ''));
+    this.logger.log('---');
 
     // Step 6: Convert placeholders back to MarkdownV2 syntax
+    this.logger.log('[STEP 6] Converting placeholders to MarkdownV2 syntax...');
     text = text.replace(/XBOLDX/g, '*');
     text = text.replace(/XBOLDENDX/g, '*');
     text = text.replace(/XITALICX/g, '_');
     text = text.replace(/XITALICENDX/g, '_');
-    text = text.replace(/XLINKX/g, '[');
-    text = text.replace(/XURLX/g, '](');
-    text = text.replace(/XLINKENDX/g, ')');
+    this.logger.log('[STEP 6] After placeholder conversion:');
+    this.logger.log(text.substring(0, 500) + (text.length > 500 ? '...' : ''));
+    this.logger.log('---');
+
+    // Step 7: Restore links
+    links.forEach((link, index) => {
+      this.logger.log(`[STEP 7] Restoring link #${index}: [${link.text}](${link.url})`);
+      const linkMarkdown = `[${link.text}](${link.url})`;
+      text = text.replace(`XLINK${index}X`, linkMarkdown);
+    });
+    if (links.length > 0) {
+      this.logger.log('[STEP 7] After link restoration:');
+      this.logger.log(text.substring(0, 500) + (text.length > 500 ? '...' : ''));
+      this.logger.log('---');
+    }
+
+    this.logger.log('FINAL OUTPUT:');
+    this.logger.log(text);
+    this.logger.log('========== MARKDOWN CONVERSION END ==========');
 
     return text;
   }

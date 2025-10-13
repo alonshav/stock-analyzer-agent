@@ -26,6 +26,8 @@ import { z } from 'zod';
 import {
   createEventName,
   StreamEventType,
+  ToolName,
+  isToolName,
   FRAMEWORK_VERSION,
   DEFAULT_MODEL,
   DEFAULT_MAX_TURNS,
@@ -70,6 +72,7 @@ export class AgentService {
   private readonly logger = new Logger(AgentService.name);
   private readonly toolRegistry;
   private readonly mcpServer;
+  private readonly toolUseIdToName = new Map<string, string>();
 
   constructor(
     private config: ConfigService,
@@ -550,7 +553,7 @@ export class AgentService {
 
     // Handle different delta types according to RawContentBlockDeltaEvent spec
     let partialText = '';
-    let deltaType: 'text' | 'thinking' | 'tool_input' | 'unknown' = 'unknown';
+    let deltaType = '';
 
     if (event?.type === 'content_block_delta') {
       const delta = event.delta;
@@ -624,6 +627,9 @@ export class AgentService {
           );
         }
       } else if (block.type === 'tool_use') {
+        // Track tool use ID to name mapping for later retrieval
+        this.toolUseIdToName.set(block.id, block.name);
+
         if (streamToClient) {
           this.eventEmitter.emit(
             createEventName(StreamEventType.TOOL, sessionId),
@@ -657,6 +663,7 @@ export class AgentService {
 
   /**
    * Handle user message (tool results)
+   * Processes tool results and delegates to specific handlers
    */
   private handleUserMessage(
     userMessage: SDKUserMessage,
@@ -671,26 +678,38 @@ export class AgentService {
       success: boolean;
     }> = [];
 
+    // Process each tool result
     for (const block of apiMessage.content) {
       if (block.type === 'tool_result') {
         const isError = block.is_error || false;
+        const toolUseId = block.tool_use_id;
+        const toolName = this.toolUseIdToName.get(toolUseId) || 'unknown';
 
         toolResults.push({
-          toolId: block.tool_use_id,
-          toolName: 'tool_result',
+          toolId: toolUseId,
+          toolName,
           success: !isError,
         });
 
+        // Process tool-specific results
+        if (streamToClient && !isError) {
+          this.processToolResult(toolName, block, sessionId, ticker);
+        }
+
+        // Emit generic tool result event
         if (streamToClient) {
           this.eventEmitter.emit(
             createEventName(StreamEventType.TOOL_RESULT, sessionId),
             {
               ticker,
-              toolId: block.tool_use_id,
+              toolId: toolUseId,
               timestamp: new Date().toISOString(),
             }
           );
         }
+
+        // Clean up tracking map
+        this.toolUseIdToName.delete(toolUseId);
       }
     }
 
@@ -704,6 +723,99 @@ export class AgentService {
         );
       });
     }
+  }
+
+  /**
+   * Process tool-specific results and emit specialized events
+   * Routes to handlers based on tool name
+   */
+  private processToolResult(
+    toolName: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    block: any,
+    sessionId: string,
+    ticker: string
+  ): void {
+    this.logger.debug(
+      `[${sessionId}] processToolResult called - toolName: "${toolName}"`
+    );
+
+    // Parse tool result content
+    const toolResultData = this.parseToolResultContent(block);
+    if (!toolResultData) {
+      this.logger.debug(
+        `[${sessionId}] Could not parse tool result as JSON - skipping specialized handling`
+      );
+      return; // Not parseable JSON
+    }
+
+    // Route to specific handlers based on tool name (using isToolName helper)
+    if (isToolName(toolName, ToolName.GENERATE_PDF)) {
+      this.logger.debug(
+        `[${sessionId}] Tool name matches GENERATE_PDF - calling PDF handler`
+      );
+      this.handlePdfToolResult(toolResultData, sessionId, ticker);
+    } else {
+      this.logger.debug(
+        `[${sessionId}] Tool name "${toolName}" does not match GENERATE_PDF`
+      );
+    }
+
+    // Easy to extend with more handlers:
+    // else if (isToolName(toolName, ToolName.CALCULATE_DCF)) {
+    //   this.handleDcfToolResult(toolResultData, sessionId, ticker);
+    // }
+  }
+
+  /**
+   * Parse tool result content from text blocks
+   * Returns parsed JSON data or null if not parseable
+   */
+  private parseToolResultContent(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    block: any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): any | null {
+    if (!Array.isArray(block.content)) {
+      return null;
+    }
+
+    for (const contentBlock of block.content) {
+      if (contentBlock.type === 'text') {
+        try {
+          return JSON.parse(contentBlock.text);
+        } catch {
+          // Not JSON - continue checking other content blocks
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Handle PDF tool result - emit PDF event for downstream processing
+   */
+  private handlePdfToolResult(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    toolResultData: any,
+    sessionId: string,
+    ticker: string
+  ): void {
+    this.logger.log(
+      `[${sessionId}] 📄 PDF detected - Size: ${
+        toolResultData.fileSize || 0
+      } bytes, Type: ${toolResultData.reportType || 'unknown'}`
+    );
+
+    this.eventEmitter.emit(createEventName(StreamEventType.PDF, sessionId), {
+      ticker,
+      pdfBase64: toolResultData.pdfBase64,
+      fileSize: toolResultData.fileSize,
+      reportType: toolResultData.reportType,
+      provider: toolResultData.provider,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   /**
