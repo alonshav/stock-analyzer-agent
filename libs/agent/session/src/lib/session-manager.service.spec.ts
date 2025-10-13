@@ -190,7 +190,7 @@ describe('SessionManagerService', () => {
     it('should throw when session does not exist', () => {
       expect(() => {
         service.addMessage('chat999', MessageRole.USER, 'Hello');
-      }).toThrow('No active session');
+      }).toThrow('No active or completed session');
     });
 
     it('should increment turns metric', () => {
@@ -263,7 +263,7 @@ describe('SessionManagerService', () => {
     it('should throw when no active session', () => {
       expect(() => {
         service.buildContextPrompt('chat999', 'Question');
-      }).toThrow('No active session');
+      }).toThrow('No active or completed session');
     });
   });
 
@@ -393,9 +393,12 @@ describe('SessionManagerService', () => {
       expect(recent).toHaveLength(3);
     });
 
-    it('should return both ACTIVE and COMPLETED sessions', () => {
+    it('should return both ACTIVE and COMPLETED sessions', async () => {
       service.createSession('chat1', 'AAPL');
       service.completeSession('chat1', 'A', 'S'); // COMPLETED
+
+      // Wait 10ms to ensure different timestamps
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       service.createSession('chat1', 'MSFT'); // ACTIVE
 
@@ -416,13 +419,16 @@ describe('SessionManagerService', () => {
 
   describe('cleanupExpiredSessions', () => {
     it('should remove expired sessions', () => {
-      const session = service.createSession('chat1', 'AAPL');
-      session.expiresAt = new Date(Date.now() - 1000);
+      service.createSession('chat1', 'AAPL');
+      service.completeSession('chat1', 'A', 'S'); // Must be COMPLETED to be cleaned up
+
+      const sessions = service['sessions'].get('chat1')!;
+      sessions[0].expiresAt = new Date(Date.now() - 1000);
 
       service.cleanupExpiredSessions();
 
-      const sessions = service['sessions'].get('chat1');
-      expect(sessions).toBeUndefined();
+      const remainingSessions = service['sessions'].get('chat1');
+      expect(remainingSessions).toBeUndefined();
     });
 
     it('should not remove active sessions', () => {
@@ -460,10 +466,12 @@ describe('SessionManagerService', () => {
 
     it('should preserve non-expired sessions', () => {
       service.createSession('chat1', 'AAPL');
-      const session2 = service.createSession('chat1', 'MSFT');
-      service.completeSession('chat1', 'A', 'S');
+      service.completeSession('chat1', 'A1', 'S1'); // Complete AAPL
 
-      // Expire only first session
+      service.createSession('chat1', 'MSFT');
+      service.completeSession('chat1', 'A2', 'S2'); // Complete MSFT
+
+      // Expire only first session (AAPL)
       const sessions = service['sessions'].get('chat1')!;
       sessions[0].expiresAt = new Date(Date.now() - 1000);
 
