@@ -45,6 +45,7 @@ export class StreamManagerService {
   private readonly logger = new Logger(StreamManagerService.name);
   private readonly activeClients = new Map<string, SSEClientService>();
   private readonly streamBuffers = new Map<string, string>();
+  private readonly activeResponses = new Set<string>();
 
   constructor(
     private readonly sessionOrchestrator: SessionOrchestrator,
@@ -222,18 +223,24 @@ export class StreamManagerService {
         `💬 You can now ask follow-up questions!`
       );
 
+      // Stop responding flag
+      this.stopResponding(chatId);
       this.cleanup(chatId);
     });
 
     // Handle ERROR event
     client.on(StreamEventType.ERROR, async (data) => {
       await ctx.reply(`❌ Error: ${data.message}`);
+      // Stop responding flag
+      this.stopResponding(chatId);
       this.cleanup(chatId);
     });
 
     // Handle connection close
     client.on('close', () => {
       this.logger.log(`Connection closed for chat ${chatId}`);
+      // Stop responding flag
+      this.stopResponding(chatId);
       this.cleanup(chatId);
     });
 
@@ -241,6 +248,8 @@ export class StreamManagerService {
     client.on('error', async (error) => {
       this.logger.error('SSE error:', error);
       await ctx.reply('❌ Connection lost. Please try again.');
+      // Stop responding flag
+      this.stopResponding(chatId);
       this.cleanup(chatId);
     });
   }
@@ -286,6 +295,29 @@ export class StreamManagerService {
       status: session.status,
       startedAt: session.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * Check if bot is currently responding to user
+   */
+  isResponding(chatId: string): boolean {
+    return this.activeResponses.has(chatId);
+  }
+
+  /**
+   * Mark that bot started responding
+   */
+  startResponding(chatId: string): void {
+    this.activeResponses.add(chatId);
+    this.logger.log(`[${chatId}] Started responding`);
+  }
+
+  /**
+   * Mark that bot stopped responding
+   */
+  stopResponding(chatId: string): void {
+    this.activeResponses.delete(chatId);
+    this.logger.log(`[${chatId}] Stopped responding`);
   }
 
   /**

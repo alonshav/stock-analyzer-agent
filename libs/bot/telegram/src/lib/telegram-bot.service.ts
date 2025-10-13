@@ -89,23 +89,33 @@ export class TelegramBotService implements OnApplicationBootstrap {
       return;
     }
 
-    // Check for active session via SessionOrchestrator
-    if (this.sessionOrchestrator.hasActiveSession(chatId)) {
-      await ctx.reply('An analysis is already running. Use /stop to cancel.');
+    // Check if bot is currently responding
+    if (this.streamManager.isResponding(chatId)) {
+      await ctx.reply('⏳ Please wait for the current response to complete...');
       return;
     }
 
     try {
       await ctx.sendChatAction('typing');
+      await ctx.reply(`📊 Starting analysis for ${ticker}...`);
 
-      // Create session via SessionOrchestrator
-      const session = this.sessionOrchestrator.createSession(chatId, ticker);
+      // Get or create session
+      let session = this.sessionOrchestrator.getActiveSession(chatId) ||
+                    this.sessionOrchestrator.getCompletedSession(chatId);
 
-      this.logger.log(
-        `Created session ${session.sessionId} for chat ${chatId}, ticker ${ticker}`
-      );
+      if (!session) {
+        session = this.sessionOrchestrator.createSession(chatId, ticker);
+        this.logger.log(`Created session ${session.sessionId} for chat ${chatId}, ticker ${ticker}`);
+      } else {
+        // Update ticker if different
+        this.logger.log(`Using existing session ${session.sessionId}, updating ticker to ${ticker}`);
+        // Note: We'd need to add a method to update ticker if needed
+      }
 
-      // Start streaming from Agent service (StreamManager will use the session)
+      // Mark as responding
+      this.streamManager.startResponding(chatId);
+
+      // Start streaming from Agent service
       await this.streamManager.startStream({
         chatId,
         ctx,
@@ -115,12 +125,13 @@ export class TelegramBotService implements OnApplicationBootstrap {
           workflowType: WorkflowType.FULL_ANALYSIS,
           params: {
             ticker,
-            userPrompt: message,
+            userPrompt: 'Perform a comprehensive stock analysis',
           },
         },
       });
     } catch (error) {
       this.logger.error('Failed to start analysis:', error);
+      this.streamManager.stopResponding(chatId);
       await ctx.reply('Failed to start analysis. Please try again.');
     }
   }
@@ -133,22 +144,21 @@ export class TelegramBotService implements OnApplicationBootstrap {
       return;
     }
 
-    // Check if there's an active session or stream
-    const hasStream = this.streamManager.hasActiveStream(chatId);
-    const hasSession = this.sessionOrchestrator.hasActiveSession(chatId) ||
-                       this.sessionOrchestrator.hasCompletedSession(chatId);
-
-    if (hasStream || hasSession) {
+    // Check if bot is responding
+    if (this.streamManager.isResponding(chatId)) {
       // Stop stream in StreamManager
       this.streamManager.stopStream(chatId);
+
+      // Stop responding flag
+      this.streamManager.stopResponding(chatId);
 
       // Stop session in SessionOrchestrator
       this.sessionOrchestrator.stopSession(chatId);
 
-      this.logger.log(`Stopped analysis for chat ${chatId}`);
-      await ctx.reply('❌ Analysis stopped.');
+      this.logger.log(`Stopped response for chat ${chatId}`);
+      await ctx.reply('❌ Stopped.');
     } else {
-      await ctx.reply('No active analysis to stop.');
+      await ctx.reply('Nothing to stop - bot is not currently responding.');
     }
   }
 
@@ -159,33 +169,14 @@ export class TelegramBotService implements OnApplicationBootstrap {
 
     if (!chatId) return;
 
-    // Check if there's an active session
-    const hasActiveSession = this.streamManager.hasActiveSession(chatId);
-
-    // Check if it's a ticker symbol (1-5 uppercase letters)
-    if (/^[A-Z]{1,5}$/.test(text)) {
-      if (hasActiveSession) {
-        // Ask for confirmation before starting new analysis
-        await ctx.reply(
-          `You have an active analysis session. Reply with:
-• "yes" to start analyzing ${text}
-• Or ask a question about the current analysis`
-        );
-        return;
-      }
-
-      // Treat as analyze command
-      message.text = `/analyze ${text}`;
-      await this.handleAnalyzeCommand(ctx);
-    } else if (hasActiveSession) {
-      // Route to conversation mode
-      await this.handleConversation(ctx, text);
-    } else {
-      await ctx.reply(
-        'No active analysis session.\n\n' +
-        'Send a ticker symbol (e.g., AAPL) or use /analyze TICKER to start.'
-      );
+    // Check if bot is currently responding - block input
+    if (this.streamManager.isResponding(chatId)) {
+      await ctx.reply('⏳ Please wait for the current response to complete...');
+      return;
     }
+
+    // Handle all messages as conversation (free-form chat)
+    await this.handleConversation(ctx, text);
   }
 
   /**
@@ -193,23 +184,48 @@ export class TelegramBotService implements OnApplicationBootstrap {
    */
   private async handleConversation(ctx: Context, message: string) {
     const chatId = ctx.chat?.id.toString();
-
     if (!chatId) return;
 
     try {
       await ctx.sendChatAction('typing');
-      await ctx.reply('💭 Thinking...');
 
-      // Stream conversation response from Agent
-      await this.streamManager.startConversation(
+      // Get or create session
+      let session = this.sessionOrchestrator.getActiveSession(chatId) ||
+                    this.sessionOrchestrator.getCompletedSession(chatId);
+
+      if (!session) {
+        // Create new session for conversation (no specific ticker)
+        session = this.sessionOrchestrator.createSession(chatId, 'GENERAL');
+        this.logger.log(`Created new conversation session for chat ${chatId}`);
+      }
+
+      // Add user message to history
+      this.sessionOrchestrator.addUserMessage(chatId, message);
+
+      // Mark as responding
+      this.streamManager.startResponding(chatId);
+
+      // Stream response from Agent
+      await this.streamManager.startStream({
         chatId,
-        message,
         ctx,
-        this.agentUrl
-      );
+        agentUrl: this.agentUrl,
+        workflowRequest: {
+          sessionId: session.sessionId,
+          workflowType: WorkflowType.CONVERSATION,
+          params: {
+            ticker: session.ticker,
+            userPrompt: message,
+            additionalContext: {
+              conversationHistory: this.sessionOrchestrator.getConversationHistory(chatId),
+            },
+          },
+        },
+      });
     } catch (error) {
       this.logger.error('Failed to handle conversation:', error);
-      await ctx.reply('Failed to process your question. Please try again.');
+      this.streamManager.stopResponding(chatId);
+      await ctx.reply('Failed to process your message. Please try again.');
     }
   }
 
@@ -239,40 +255,42 @@ export class TelegramBotService implements OnApplicationBootstrap {
 
   private async handleStartCommand(ctx: Context) {
     await ctx.reply(
-      '👋 Welcome to Stock Analyzer Bot!\n\n' +
-        'This bot uses an AI agent with financial analysis tools ' +
-        'to perform comprehensive stock analysis.\n\n' +
-        '📋 Commands:\n' +
-        '/analyze TICKER - Start new analysis\n' +
-        '/status - Check active session\n' +
-        '/stop - Stop current analysis\n' +
-        '/help - Show detailed help\n\n' +
-        '💡 Tips:\n' +
-        '• Just send a ticker symbol (e.g., AAPL)\n' +
-        '• Ask follow-up questions during active sessions\n' +
-        '• Sessions auto-expire after 1 hour'
+      '👋 Welcome to Stock Analyzer!\n\n' +
+        '💬 Just start chatting! Ask me anything about investing, stocks, or finance.\n\n' +
+        '📊 Commands:\n' +
+        '/analyze TICKER - Run deep analysis (30-60s)\n' +
+        '/status - Check session status\n' +
+        '/stop - Cancel current response\n' +
+        '/help - Show this help\n\n' +
+        '💡 Examples:\n' +
+        '• "Explain P/E ratios"\n' +
+        '• "What makes a stock undervalued?"\n' +
+        '• /analyze AAPL (runs full analysis)\n' +
+        '• "What\'s the DCF value?" (after analysis)\n\n' +
+        '⏱️ Sessions last 1 hour from last activity.'
     );
   }
 
   private async handleHelpCommand(ctx: Context) {
     await ctx.reply(
       '📖 How to use:\n\n' +
-        '🔍 Start Analysis:\n' +
-        '• /analyze AAPL - Analyze Apple Inc.\n' +
-        '• Or just send: AAPL\n\n' +
-        '💬 Conversation Mode:\n' +
-        '• Once analysis starts, ask questions:\n' +
-        '  "What is the P/E ratio?"\n' +
-        '  "How does it compare to peers?"\n' +
-        '  "What are the risks?"\n\n' +
-        '⚙️ Controls:\n' +
-        '• /status - View active session\n' +
-        '• /stop - Cancel analysis\n\n' +
-        '⚡ Real-time streaming shows:\n' +
-        '• Tool usage (data fetching, calculations)\n' +
-        '• Thinking process\n' +
-        '• Progressive analysis updates\n\n' +
-        '📊 Sessions expire after 1 hour of inactivity.'
+        '💬 Free-Form Chat:\n' +
+        '• Just send any message to start chatting\n' +
+        '• Ask about investing, valuations, financial concepts\n' +
+        '• No commands needed for casual conversation\n\n' +
+        '📊 Deep Analysis:\n' +
+        '• /analyze AAPL - Run comprehensive 30-60s analysis\n' +
+        '• Includes: DCF, ratios, quality assessment, PDF report\n' +
+        '• Input blocked during analysis (like Claude)\n\n' +
+        '💭 How It Works:\n' +
+        '• Bot blocks input while responding (any response)\n' +
+        '• You\'ll see "⏳ Please wait..." if you try to send\n' +
+        '• Use /stop to cancel current response\n' +
+        '• Sessions remember context for 1 hour\n\n' +
+        '⚙️ Commands:\n' +
+        '• /status - Check session status\n' +
+        '• /stop - Cancel current response\n' +
+        '• /help - Show this message'
     );
   }
 
