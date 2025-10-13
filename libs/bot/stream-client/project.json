@@ -1,0 +1,19 @@
+{
+  "name": "stream-client",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/bot/stream-client/src",
+  "projectType": "library",
+  "tags": [],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/libs/bot/stream-client",
+        "main": "libs/bot/stream-client/src/index.ts",
+        "tsConfig": "libs/bot/stream-client/tsconfig.lib.json",
+        "assets": ["libs/bot/stream-client/*.md"]
+      }
+    }
+  }
+}

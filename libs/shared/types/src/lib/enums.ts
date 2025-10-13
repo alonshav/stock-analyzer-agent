@@ -93,13 +93,30 @@ export enum StreamEventType {
 }
 
 // ============================================================================
-// Analysis Status
+// Workflow Types
 // ============================================================================
 
-export enum AnalysisStatus {
-  PROCESSING = 'processing',
-  COMPLETE = 'complete',
-  ERROR = 'error',
+export enum WorkflowType {
+  FULL_ANALYSIS = 'full_analysis',
+  CONVERSATION = 'conversation',
+  SENTIMENT = 'sentiment',
+  DCF_VALUATION = 'dcf_valuation',
+  PEER_COMPARISON = 'peer_comparison',
+}
+
+export interface WorkflowConfig {
+  type: WorkflowType;
+  systemPrompt: string;
+  model: string;
+  maxTurns: number;
+  maxThinkingTokens: number;
+  enabledTools: string[];
+}
+
+export interface WorkflowParams {
+  ticker: string;
+  userPrompt?: string;
+  additionalContext?: Record<string, unknown>;
 }
 
 // ============================================================================

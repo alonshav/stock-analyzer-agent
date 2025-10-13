@@ -18,7 +18,10 @@
       "@stock-analyzer/agent/api": ["libs/agent/api/src/index.ts"],
       "@stock-analyzer/agent/core": ["libs/agent/core/src/index.ts"],
       "@stock-analyzer/agent/session": ["libs/agent/session/src/index.ts"],
-      "@stock-analyzer/bot/common": ["libs/bot/common/src/index.ts"],
+      "@stock-analyzer/bot/sessions": ["libs/bot/sessions/src/index.ts"],
+      "@stock-analyzer/bot/stream-client": [
+        "libs/bot/stream-client/src/index.ts"
+      ],
       "@stock-analyzer/bot/telegram": ["libs/bot/telegram/src/index.ts"],
       "@stock-analyzer/mcp/integrations": [
         "libs/mcp/integrations/src/index.ts"

@@ -1,8 +1,9 @@
 {
-  "name": "bot-common",
+  "name": "bot-sessions",
   "$schema": "../../../node_modules/nx/schemas/project-schema.json",
-  "sourceRoot": "libs/bot/common/src",
+  "sourceRoot": "libs/bot/sessions/src",
   "projectType": "library",
   "tags": ["type:library", "scope:bot"],
+  "// targets": "to see all targets run: nx show project bot-sessions --web",
   "targets": {}
 }

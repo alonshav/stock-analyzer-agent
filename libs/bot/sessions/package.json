@@ -1,5 +1,5 @@
 {
-  "name": "@stock-analyzer/bot/common",
+  "name": "@stock-analyzer/bot/sessions",
   "version": "0.0.1",
   "private": true,
   "type": "commonjs",

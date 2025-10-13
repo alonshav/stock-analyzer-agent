@@ -485,6 +485,64 @@ res.write(`data: ${JSON.stringify({
 - Telegram bot decodes base64 and sends PDF as document via `sendDocument()`
 - Tool() wrapper functions must remain simple - NO event emission in tool execution
 
+## Stream Event Architecture
+
+**Centralized Event Type System** (`libs/shared/types/src/lib/enums.ts`):
+
+All SSE events use the `StreamEventType` enum for type safety:
+
+```typescript
+export enum StreamEventType {
+  CONNECTED = 'connected',      // Stream established
+  CHUNK = 'chunk',              // Text content from LLM
+  THINKING = 'thinking',        // Extended thinking indicator
+  TOOL = 'tool',                // Tool called
+  TOOL_RESULT = 'tool_result',  // Tool execution completed
+  PDF = 'pdf',                  // PDF generated
+  RESULT = 'result',            // Final conversation result
+  SYSTEM = 'system',            // System initialization
+  COMPACTION = 'compaction',    // Context compaction
+  PARTIAL = 'partial',          // Partial streaming chunks
+  COMPLETE = 'complete',        // Analysis complete
+  ERROR = 'error',              // Error occurred
+}
+
+// Event naming helper
+const eventName = createEventName(StreamEventType.CHUNK, sessionId);
+// Returns: "analysis.chunk.{sessionId}"
+```
+
+**Tool Name Matching**:
+
+The `isToolName()` helper handles both plain and MCP-prefixed tool names:
+
+```typescript
+import { isToolName, ToolName } from '@stock-analyzer/shared/types';
+
+// Helper function handles both plain and MCP-prefixed names
+isToolName('mcp__stock-analyzer__fetch_company_data', ToolName.FETCH_COMPANY_DATA) // true
+isToolName('fetch_company_data', ToolName.FETCH_COMPANY_DATA) // true
+```
+
+**Tool Names Enum**:
+
+```typescript
+export enum ToolName {
+  FETCH_COMPANY_DATA = 'fetch_company_data',
+  CALCULATE_DCF = 'calculate_dcf',
+  GENERATE_PDF = 'generate_pdf',
+  TEST_API_CONNECTION = 'test_api_connection',
+}
+
+// MCP-prefixed versions (as they appear in Agent SDK)
+export const MCPToolName = {
+  FETCH_COMPANY_DATA: 'mcp__stock-analyzer__fetch_company_data',
+  CALCULATE_DCF: 'mcp__stock-analyzer__calculate_dcf',
+  GENERATE_PDF: 'mcp__stock-analyzer__generate_pdf',
+  TEST_API_CONNECTION: 'mcp__stock-analyzer__test_api_connection',
+} as const;
+```
+
 ## Environment Variables
 
 ### Agent (Port 3001)
@@ -734,7 +792,91 @@ PDF generation (`libs/mcp/tools/src/lib/pdf/generate-pdf-tool.ts`) uses Anvil's 
 
 **Always follow these conventions:**
 - **Kill servers** after finishing debugging/testing/coding with a process
-- **Private methods** at the end of TypeScript files
-- **Public methods** after the constructor
-- **Properties** before the constructor
+- **Method organization** in TypeScript classes:
+  1. Properties (before constructor)
+  2. Constructor
+  3. Public methods
+  4. Private methods (at the end)
 - **Tool() wrappers** must remain simple - execute tool and return result only, NO side effects or event emission
+- **Event emission** happens in `agent.service.ts:executeQuery()` when processing messages, NOT in tool execution
+- **Message handlers** follow extract → process → log pattern with clear separation of concerns
+- **Use centralized enums** (`StreamEventType`, `ToolName`) instead of string literals
+- **Helper functions** like `createEventName()` and `isToolName()` for consistency
+
+## Message Handler Pattern
+
+**AgentService Message Processing** (`libs/agent/core/src/lib/agent.service.ts`):
+
+The service processes 7 SDK message types with clean separation of concerns:
+
+```typescript
+// Main handler delegates to specialized handlers
+private handleUserMessage(userMessage, sessionId, ticker, streamToClient) {
+  const toolResults = this.extractToolResults(apiMessage);  // 1. Extract
+
+  for (const result of toolResults) {
+    this.processToolResultBlock(result, ...);                // 2. Process
+  }
+
+  this.logToolResultsSummary(toolResults, sessionId);       // 3. Log
+}
+
+// Specialized handlers for each aspect
+private extractToolResults(apiMessage): ToolResultData[]
+private processToolResultBlock(result, ...)
+private logToolResultsSummary(results, sessionId)
+private processToolResult(toolName, block, ...) // Routes to tool-specific handlers
+private handlePdfToolResult(toolResultData, ...)
+```
+
+**Pattern Benefits:**
+- **Single Responsibility** - Each method has one clear purpose
+- **Easy to Test** - Methods can be tested independently
+- **Easy to Extend** - Adding new tool result handlers is straightforward
+- **Clean Logging** - Separated from business logic
+
+**Adding New Tool Result Handlers**:
+
+1. Add new tool name to `ToolName` enum in `libs/shared/types/src/lib/enums.ts`:
+```typescript
+export enum ToolName {
+  FETCH_COMPANY_DATA = 'fetch_company_data',
+  CALCULATE_DCF = 'calculate_dcf',
+  GENERATE_PDF = 'generate_pdf',
+  MY_NEW_TOOL = 'my_new_tool',  // Add here
+}
+```
+
+2. Add handler method in `agent.service.ts`:
+```typescript
+private handleMyToolResult(
+  toolResultData: any,
+  sessionId: string,
+  ticker: string
+): void {
+  this.logger.log(`[${sessionId}] 🔧 My tool result processed`);
+
+  this.eventEmitter.emit(
+    createEventName(StreamEventType.MY_EVENT, sessionId),
+    {
+      ticker,
+      ...toolResultData,
+      timestamp: new Date().toISOString(),
+    }
+  );
+}
+```
+
+3. Add routing in `processToolResult()`:
+```typescript
+else if (isToolName(toolName, ToolName.MY_NEW_TOOL)) {
+  this.handleMyToolResult(toolResultData, sessionId, ticker);
+}
+```
+
+**Key Principles:**
+- **Extract first** - Separate data extraction from processing
+- **Process cleanly** - Handle tool-specific logic in dedicated methods
+- **Log separately** - Keep logging code separate from business logic
+- **Use type-safe helpers** - Leverage `isToolName()` for matching
+- **Emit events consistently** - Use `createEventName()` for all events

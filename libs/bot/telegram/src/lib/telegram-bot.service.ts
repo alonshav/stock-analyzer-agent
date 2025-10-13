@@ -2,6 +2,8 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Telegraf, Context } from 'telegraf';
 import { StreamManagerService } from './stream-manager.service';
+import { SessionOrchestrator } from '@stock-analyzer/bot/sessions';
+import { WorkflowType } from '@stock-analyzer/shared/types';
 
 @Injectable()
 export class TelegramBotService implements OnApplicationBootstrap {
@@ -12,7 +14,8 @@ export class TelegramBotService implements OnApplicationBootstrap {
 
   constructor(
     private configService: ConfigService,
-    private streamManager: StreamManagerService
+    private streamManager: StreamManagerService,
+    private sessionOrchestrator: SessionOrchestrator
   ) {
     const token = this.configService.get<string>('telegram.botToken');
     if (!token) {
@@ -45,8 +48,8 @@ export class TelegramBotService implements OnApplicationBootstrap {
     }
   }
 
-  async handleUpdate(update: any): Promise<void> {
-    await this.bot.handleUpdate(update);
+  async handleUpdate(update: unknown): Promise<void> {
+    await this.bot.handleUpdate(update as any);
   }
 
   private async setupBot() {
@@ -71,7 +74,8 @@ export class TelegramBotService implements OnApplicationBootstrap {
   }
 
   private async handleAnalyzeCommand(ctx: Context) {
-    const text = (ctx.message as any)?.text || '';
+    const message = ctx.message as any;
+    const text = message?.text || '';
     const ticker = text.split(' ')[1]?.toUpperCase();
     const chatId = ctx.chat?.id.toString();
 
@@ -80,7 +84,13 @@ export class TelegramBotService implements OnApplicationBootstrap {
       return;
     }
 
-    if (!chatId || this.streamManager.hasActiveStream(chatId)) {
+    if (!chatId) {
+      await ctx.reply('Unable to identify chat. Please try again.');
+      return;
+    }
+
+    // Check for active session via SessionOrchestrator
+    if (this.sessionOrchestrator.hasActiveSession(chatId)) {
       await ctx.reply('An analysis is already running. Use /stop to cancel.');
       return;
     }
@@ -88,12 +98,26 @@ export class TelegramBotService implements OnApplicationBootstrap {
     try {
       await ctx.sendChatAction('typing');
 
-      // Start streaming from Agent service
+      // Create session via SessionOrchestrator
+      const session = this.sessionOrchestrator.createSession(chatId, ticker);
+
+      this.logger.log(
+        `Created session ${session.sessionId} for chat ${chatId}, ticker ${ticker}`
+      );
+
+      // Start streaming from Agent service (StreamManager will use the session)
       await this.streamManager.startStream({
         chatId,
-        ticker,
         ctx,
         agentUrl: this.agentUrl,
+        workflowRequest: {
+          sessionId: session.sessionId,
+          workflowType: WorkflowType.FULL_ANALYSIS,
+          params: {
+            ticker,
+            userPrompt: message,
+          },
+        },
       });
     } catch (error) {
       this.logger.error('Failed to start analysis:', error);
@@ -104,7 +128,24 @@ export class TelegramBotService implements OnApplicationBootstrap {
   private async handleStopCommand(ctx: Context) {
     const chatId = ctx.chat?.id.toString();
 
-    if (chatId && this.streamManager.stopStream(chatId)) {
+    if (!chatId) {
+      await ctx.reply('Unable to identify chat. Please try again.');
+      return;
+    }
+
+    // Check if there's an active session or stream
+    const hasStream = this.streamManager.hasActiveStream(chatId);
+    const hasSession = this.sessionOrchestrator.hasActiveSession(chatId) ||
+                       this.sessionOrchestrator.hasCompletedSession(chatId);
+
+    if (hasStream || hasSession) {
+      // Stop stream in StreamManager
+      this.streamManager.stopStream(chatId);
+
+      // Stop session in SessionOrchestrator
+      this.sessionOrchestrator.stopSession(chatId);
+
+      this.logger.log(`Stopped analysis for chat ${chatId}`);
       await ctx.reply('❌ Analysis stopped.');
     } else {
       await ctx.reply('No active analysis to stop.');
@@ -112,7 +153,8 @@ export class TelegramBotService implements OnApplicationBootstrap {
   }
 
   private async handleTextMessage(ctx: Context) {
-    const text = (ctx.message as any)?.text || '';
+    const message = ctx.message as any;
+    const text = message?.text || '';
     const chatId = ctx.chat?.id.toString();
 
     if (!chatId) return;
@@ -133,7 +175,7 @@ export class TelegramBotService implements OnApplicationBootstrap {
       }
 
       // Treat as analyze command
-      (ctx.message as any).text = `/analyze ${text}`;
+      message.text = `/analyze ${text}`;
       await this.handleAnalyzeCommand(ctx);
     } else if (hasActiveSession) {
       // Route to conversation mode
@@ -156,16 +198,15 @@ export class TelegramBotService implements OnApplicationBootstrap {
 
     try {
       await ctx.sendChatAction('typing');
-
-      const initialMsg = await ctx.reply('💭 Thinking...');
+      await ctx.reply('💭 Thinking...');
 
       // Stream conversation response from Agent
-      await this.streamManager.startConversation({
+      await this.streamManager.startConversation(
         chatId,
         message,
         ctx,
-        agentUrl: this.agentUrl,
-      });
+        this.agentUrl
+      );
     } catch (error) {
       this.logger.error('Failed to handle conversation:', error);
       await ctx.reply('Failed to process your question. Please try again.');

@@ -1,12 +1,8 @@
 /**
- * Stateless AgentService with Workflow Support
- *
- * Key Changes from Previous Version:
- * - Removed SessionManager dependency (Bot owns sessions now)
- * - Added WorkflowService for workflow configs
- * - Single method: executeWorkflow(sessionId, workflowType, params)
- * - Receives sessionId from caller (Bot), never creates sessions
- * - Uses workflow registry for system prompts and configs
+ * Enhanced AgentService with:
+ * - Session Management
+ * - All 7 SDK Message Types
+ * - Two Modes: Workflow + Conversation
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -24,6 +20,7 @@ import {
   type SDKCompactBoundaryMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { STOCK_VALUATION_FRAMEWORK } from './prompts/framework-v2.3';
 import { createToolRegistry } from '@stock-analyzer/mcp/tools';
 import { z } from 'zod';
 import {
@@ -31,29 +28,42 @@ import {
   StreamEventType,
   ToolName,
   isToolName,
-  WorkflowType,
-  WorkflowParams,
+  FRAMEWORK_VERSION,
+  DEFAULT_MODEL,
+  DEFAULT_MAX_TURNS,
+  DEFAULT_MAX_THINKING_TOKENS,
 } from '@stock-analyzer/shared/types';
-import { WorkflowService } from './workflows';
+import {
+  SessionManagerService,
+  MessageRole,
+} from '@stock-analyzer/agent/session';
+
+export interface AnalysisOptions {
+  generatePDF?: boolean;
+  focusAreas?: string[];
+  peerTickers?: string[];
+  investmentHorizon?: string;
+}
 
 export interface AnalysisResult {
-  sessionId: string;
   ticker: string;
   timestamp: string;
+  fullAnalysis?: string;
   executiveSummary: string;
   metadata: {
     analysisDate: string;
-    workflowType: string;
+    framework: string;
     model: string;
     duration: number;
   };
 }
 
-interface ExecuteQueryParams {
+export interface ExecuteQueryParams {
+  chatId: string;
   sessionId: string;
   ticker: string;
   prompt: string;
-  workflowType: WorkflowType;
+  phase: 'full-analysis' | 'executive-summary' | 'conversation';
   streamToClient: boolean;
 }
 
@@ -75,7 +85,7 @@ export class AgentService {
   constructor(
     private config: ConfigService,
     private eventEmitter: EventEmitter2,
-    private workflowService: WorkflowService
+    private sessionManager: SessionManagerService
   ) {
     const apiKey = this.config.get<string>('ANTHROPIC_API_KEY');
     if (!apiKey) {
@@ -137,90 +147,143 @@ export class AgentService {
   }
 
   /**
-   * Execute Workflow - The ONLY public method
-   *
-   * Bot creates session and calls this method with sessionId.
-   * Agent executes workflow and streams results.
-   * Bot listens to stream events and manages session lifecycle.
-   *
-   * @param sessionId - Session ID from Bot (Bot created it)
-   * @param workflowType - Type of workflow to execute
-   * @param params - Workflow parameters (ticker, prompt, context)
-   * @returns Analysis result with metadata
+   * WORKFLOW MODE: Full Stock Analysis
+   * Creates session, runs analysis with streaming
    */
-  async executeWorkflow(
-    sessionId: string,
-    workflowType: WorkflowType,
-    params: WorkflowParams
+  async analyzeStock(
+    chatId: string,
+    ticker: string,
+    userPrompt: string,
+    _options?: AnalysisOptions,
+    sessionId?: string
   ): Promise<AnalysisResult> {
     const startTime = Date.now();
-    const { ticker } = params;
+    this.logger.log(`Starting stock analysis for ${ticker} in chat ${chatId}`);
+    // Step 1: Create session
+    const session = this.sessionManager.createSession(chatId, ticker);
+    const sessionIdToUse = sessionId || session.sessionId;
 
-    this.logger.log(
-      `[${sessionId}] Starting workflow ${workflowType} for ${ticker}`
-    );
+    this.logger.log(`[${sessionIdToUse}] Starting analysis for ${ticker}`);
 
     try {
-      // Build user prompt using WorkflowService
-      const userPrompt = this.workflowService.buildUserPrompt(
-        workflowType,
-        params
-      );
-
-      // Execute query with streaming
+      // Step 2: Execute analysis with streaming
       const executiveSummary = await this.executeQuery({
-        sessionId,
+        chatId,
+        sessionId: sessionIdToUse,
         ticker,
         prompt: userPrompt,
-        workflowType,
-        streamToClient: true,
+        phase: 'executive-summary',
+        streamToClient: !!sessionId,
       });
 
-      // Build result
+      // Step 3: Complete session
+      this.sessionManager.completeSession(
+        chatId,
+        executiveSummary,
+        executiveSummary
+      );
+
+      // Step 4: Emit completion
       const duration = Date.now() - startTime;
-      const workflowConfig = this.workflowService.getConfig(workflowType);
       const result: AnalysisResult = {
-        sessionId,
         ticker,
         timestamp: new Date().toISOString(),
         executiveSummary,
         metadata: {
           analysisDate: new Date().toISOString(),
-          workflowType,
-          model: workflowConfig.model,
+          framework: FRAMEWORK_VERSION,
+          model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
           duration,
         },
       };
 
-      // Emit completion event
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.COMPLETE, sessionId),
-        {
-          ticker,
-          timestamp: result.timestamp,
-          metadata: result.metadata,
-        }
-      );
+      if (sessionId) {
+        this.eventEmitter.emit(
+          createEventName(StreamEventType.COMPLETE, sessionId),
+          {
+            ticker,
+            timestamp: result.timestamp,
+            metadata: result.metadata,
+          }
+        );
+      }
 
-      this.logger.log(
-        `[${sessionId}] Workflow complete for ${ticker} (${duration}ms)`
-      );
+      this.logger.log(`Analysis complete for ${ticker} (${duration}ms)`);
       return result;
     } catch (error) {
-      this.logger.error(`[${sessionId}] Workflow failed:`, error);
-
-      // Emit error event
-      this.eventEmitter.emit(
-        createEventName(StreamEventType.ERROR, sessionId),
-        {
-          ticker,
-          message: error instanceof Error ? error.message : 'Unknown error',
-          timestamp: new Date().toISOString(),
-        }
-      );
-
+      this.logger.error(`[${sessionIdToUse}] Analysis failed:`, error);
+      this.sessionManager.stopSession(chatId);
       throw error;
     }
+  }
+
+  /**
+   * CONVERSATION MODE: Follow-up Questions
+   * Uses session context, streams response
+   */
+  async handleConversation(
+    chatId: string,
+    message: string,
+    streamId?: string
+  ): Promise<string> {
+    // Try to get ACTIVE session first, then fall back to COMPLETED
+    this.logger.log(
+      `Handling conversation for chat ${chatId} with message: ${message.substring(
+        0,
+        50
+      )}...`
+    );
+    const session =
+      this.sessionManager.getActiveSession(chatId) ||
+      this.sessionManager.getCompletedSession(chatId);
+
+    if (!session) {
+      throw new Error('No active or completed session for conversation');
+    }
+
+    const effectiveSessionId = streamId || session.sessionId;
+
+    this.logger.log(
+      `[${effectiveSessionId}] Conversation: ${message.substring(0, 50)}...`
+    );
+
+    // Step 1: Build context from session
+    const contextPrompt = this.sessionManager.buildContextPrompt(
+      chatId,
+      message
+    );
+
+    // Step 2: Execute with streaming (use streamId for event emission if provided)
+    const result = await this.executeQuery({
+      chatId,
+      sessionId: effectiveSessionId,
+      ticker: session.ticker,
+      prompt: contextPrompt,
+      phase: 'conversation',
+      streamToClient: !!streamId, // Only stream if streamId provided
+    });
+
+    // Step 3: Save to session
+    this.sessionManager.addMessage(chatId, MessageRole.USER, message);
+    this.sessionManager.addMessage(chatId, MessageRole.ASSISTANT, result);
+
+    // Step 4: Emit completion event if streamId provided
+    if (streamId) {
+      this.eventEmitter.emit(
+        createEventName(StreamEventType.COMPLETE, streamId),
+        {
+          ticker: session.ticker,
+          metadata: {
+            analysisDate: new Date().toISOString(),
+            framework: FRAMEWORK_VERSION,
+            model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
+            duration: 0, // Conversation is quick
+          },
+        }
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -228,22 +291,21 @@ export class AgentService {
    * Handles all 7 SDK message types with debug logging
    */
   private async executeQuery(params: ExecuteQueryParams): Promise<string> {
-    const { sessionId, ticker, prompt, workflowType, streamToClient } = params;
+    const { chatId, sessionId, ticker, prompt, phase, streamToClient } = params;
 
     let fullContent = '';
     let totalTokens = 0;
 
-    // Get workflow config
-    const workflowConfig = this.workflowService.getConfig(workflowType);
-
-    // Create SDK query with workflow-specific config
+    // Create SDK query with session-aware hooks
     const stream = query({
       prompt,
       options: {
-        systemPrompt: workflowConfig.systemPrompt,
-        model: workflowConfig.model,
-        maxThinkingTokens: workflowConfig.maxThinkingTokens,
-        maxTurns: workflowConfig.maxTurns,
+        systemPrompt: STOCK_VALUATION_FRAMEWORK,
+        model: this.config.get('ANTHROPIC_MODEL') || DEFAULT_MODEL,
+        maxThinkingTokens: DEFAULT_MAX_THINKING_TOKENS,
+        maxTurns: parseInt(
+          this.config.get('ANTHROPIC_MAX_TURNS') || String(DEFAULT_MAX_TURNS)
+        ),
         permissionMode: 'bypassPermissions',
         mcpServers: {
           'stock-analyzer': this.mcpServer,
@@ -257,7 +319,7 @@ export class AgentService {
               hooks: [
                 async () => {
                   this.logger.debug(
-                    `[${sessionId}] Session started for workflow ${workflowType}`
+                    `[${sessionId}] Session started for chat ${chatId}`
                   );
                   return { continue: true };
                 },
@@ -364,7 +426,7 @@ export class AgentService {
               assistantMessage,
               sessionId,
               ticker,
-              workflowType,
+              phase,
               streamToClient
             );
             fullContent += textContent;
@@ -551,7 +613,7 @@ export class AgentService {
     assistantMessage: SDKAssistantMessage,
     sessionId: string,
     ticker: string,
-    workflowType: WorkflowType | string,
+    phase: string,
     streamToClient: boolean
   ): string {
     const apiMessage = assistantMessage.message;
@@ -591,14 +653,14 @@ export class AgentService {
       }
     }
 
-    // Emit chunk event
+    // Emit chunk event (only for conversation mode or if streamToClient is true)
     if (streamToClient) {
       this.eventEmitter.emit(
         createEventName(StreamEventType.CHUNK, sessionId),
         {
           ticker,
           content: textContent,
-          workflowType,
+          phase,
           timestamp: new Date().toISOString(),
         }
       );

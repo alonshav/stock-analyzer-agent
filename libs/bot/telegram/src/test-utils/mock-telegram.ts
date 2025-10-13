@@ -89,7 +89,7 @@ export class MockTelegramHelper {
       editMessageReplyMarkup: jest.fn().mockResolvedValue(undefined),
       telegram: {
         editMessageText: jest.fn().mockResolvedValue(undefined),
-        sendDocument: jest.fn().mockImplementation((chatId, doc, options) => {
+        sendDocument: jest.fn().mockImplementation((chatId, doc, _options) => {
           if (doc.source) {
             MockTelegramHelper.sentDocuments.push(doc.source);
           }

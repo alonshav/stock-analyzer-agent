@@ -7,7 +7,7 @@ export class TelegramBotController {
 
   @Post('webhook')
   @HttpCode(200)
-  async handleWebhook(@Body() update: any) {
+  async handleWebhook(@Body() update: Record<string, unknown>) {
     await this.botService.handleUpdate(update);
     return { ok: true };
   }

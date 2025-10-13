@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AgentService } from './agent.service';
-import { StreamService } from './stream.service';
-import { SessionManagerModule } from '@stock-analyzer/agent/session';
+import { AgentStreamService } from './agent-stream.service';
+import { WorkflowService } from './workflows';
 
 @Module({
   imports: [
@@ -17,9 +17,8 @@ import { SessionManagerModule } from '@stock-analyzer/agent/session';
       maxListeners: 20,
       verboseMemoryLeak: true,
     }),
-    SessionManagerModule,
   ],
-  providers: [AgentService, StreamService],
-  exports: [AgentService, StreamService],
+  providers: [AgentService, AgentStreamService, WorkflowService],
+  exports: [AgentService, AgentStreamService, WorkflowService],
 })
 export class AgentModule {}

@@ -9,7 +9,6 @@ Main objective: Quickly Analyze the given stock based on the financial data give
 Styling: use rich markdown format, very nicely with all sorts of headers and other cool markdown features, make sure body text is NOT in bold. ALWAYS emphasize the stock ticker in BOLD. 
 Deliverables: 
 1. Export the full final analysis as a generated PDF. Don't include it in the main flow thread/result. Only generate the PDF.
-2. provide a short will structured summary of the analysis in the main flow thread/result, not as a pdf but as plain markdown.
 `
 
 // export const STOCK_VALUATION_FRAMEWORK = `# Stock Valuation Assessment Framework v2.3

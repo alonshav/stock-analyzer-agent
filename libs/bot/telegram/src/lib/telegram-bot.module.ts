@@ -3,13 +3,17 @@ import { ConfigModule } from '@nestjs/config';
 import { TelegramBotService } from './telegram-bot.service';
 import { TelegramBotController } from './telegram-bot.controller';
 import { StreamManagerService } from './stream-manager.service';
+import { SessionStoreModule } from '@stock-analyzer/bot/sessions';
+import { TelegramFormatterService, ToolEventFormatterService } from './formatters';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, SessionStoreModule],
   controllers: [TelegramBotController],
   providers: [
     TelegramBotService,
     StreamManagerService,
+    TelegramFormatterService,
+    ToolEventFormatterService,
   ],
   exports: [TelegramBotService],
 })
