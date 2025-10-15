@@ -1,0 +1,19 @@
+{
+  "name": "bot-common",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/bot/common/src",
+  "projectType": "library",
+  "tags": [],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/libs/bot/common",
+        "main": "libs/bot/common/src/index.ts",
+        "tsConfig": "libs/bot/common/tsconfig.lib.json",
+        "assets": ["libs/bot/common/*.md"]
+      }
+    }
+  }
+}

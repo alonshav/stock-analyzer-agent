@@ -1,5 +1,5 @@
 import {
-  AnalysisSession,
+  ChatSession,
   SessionStatus,
   ConversationMessage,
 } from './session.interface';
@@ -12,30 +12,17 @@ export const SESSION_REPOSITORY = 'SESSION_REPOSITORY';
 
 export interface ISessionRepository {
   // Session lifecycle
-  createSession(chatId: string, ticker: string): AnalysisSession;
-  getSession(chatId: string): AnalysisSession | null;
-  updateSessionStatus(chatId: string, status: SessionStatus): void;
+  saveSession(session: ChatSession): void;
+  getSession(chatId: string): ChatSession | null;
   deleteSession(chatId: string): void;
 
-  // Analysis data
-  saveAnalysisResults(
-    chatId: string,
-    fullAnalysis: string,
-    executiveSummary: string
-  ): void;
-
-  // Conversation management
-  addConversationMessage(
-    chatId: string,
-    role: 'user' | 'assistant',
-    content: string
-  ): void;
+  // Conversation management (legacy - consider deprecating)
   getConversationHistory(chatId: string): ConversationMessage[];
 
   // Cleanup
-  cleanupExpiredSessions(expiryDurationMs: number): number;
+  cleanupOldStoppedSessions(cutoffDate: Date): number;
 
   // Query methods
-  getAllActiveSessions(): AnalysisSession[];
-  getSessionsByStatus(status: SessionStatus): AnalysisSession[];
+  getAllActiveSessions(): ChatSession[];
+  getSessionsByStatus(status: SessionStatus): ChatSession[];
 }

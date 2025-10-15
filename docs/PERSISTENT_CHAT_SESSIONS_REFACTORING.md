@@ -1,8 +1,8 @@
-# Session-Persistent Conversation Architecture Refactoring
+# Persistent Chat Sessions: Refactoring Plan
 
 **Status**: Planning Phase
 **Created**: 2025-10-13
-**Goal**: Transform sessions from ticker-scoped, time-limited analysis contexts into chat-scoped, persistent conversation contexts
+**Goal**: Transform sessions from ticker-scoped, time-limited analysis contexts into chat-scoped, persistent conversation contexts with simplified state management
 
 ---
 
@@ -44,15 +44,20 @@
 
 ## Phase 1: Session Model & Storage (Foundation)
 
-### 1.1 Update Session Interface
+### 1.1 Rename & Update Session Interface
 
 **Files**:
 - `libs/bot/sessions/src/lib/session-store/interfaces/session.interface.ts`
+- All files importing `AnalysisSession` type
+
+**Why Rename?**
+The name `AnalysisSession` reflects the old architecture where sessions were analysis-scoped. The new architecture has **chat-scoped** sessions that support ANY interaction (conversation, workflows, etc.), not just analysis. The name `ChatSession` accurately reflects this.
 
 **Changes**:
 
+### BEFORE (Current - To Be Replaced)
+
 ```typescript
-// BEFORE
 export enum SessionStatus {
   ACTIVE = 'active',
   COMPLETED = 'completed',
@@ -60,7 +65,7 @@ export enum SessionStatus {
   EXPIRED = 'expired',
 }
 
-export interface AnalysisSession {
+export interface AnalysisSession {  // ❌ OLD NAME - analysis-scoped
   sessionId: string;          // Format: "chat123-AAPL-1234567890"
   chatId: number;
   ticker: string;             // Session is ticker-specific
@@ -74,8 +79,11 @@ export interface AnalysisSession {
     executiveSummary?: string;
   };
 }
+```
 
-// AFTER
+### AFTER (New - Target Architecture)
+
+```typescript
 export enum SessionStatus {
   ACTIVE = 'active',          // Default state
   STOPPED = 'stopped',        // Manually ended via /new or /reset
@@ -91,7 +99,7 @@ export interface WorkflowExecution {
   metadata?: Record<string, unknown>;
 }
 
-export interface AnalysisSession {
+export interface ChatSession {  // ✅ NEW NAME - chat-scoped
   sessionId: string;          // Format: "chat123-1234567890" (no ticker)
   chatId: number;
   status: SessionStatus;
@@ -105,17 +113,28 @@ export interface AnalysisSession {
 ```
 
 **Implementation Notes**:
+- **Rename interface**: `AnalysisSession` → `ChatSession` throughout codebase
 - Remove `expiresAt` field entirely (no auto-expiration)
 - Remove `ticker` field from session (not ticker-scoped)
 - Add `workflows` array to track workflow executions within session
 - Simplify `SessionStatus` to only ACTIVE and STOPPED
 - `sessionId` format changes from `chat-ticker-timestamp` to `chat-timestamp`
 
+**Files Affected by Rename**:
+- Session interface definition
+- SessionOrchestratorService (all method signatures)
+- Session repository/storage layer
+- Telegram bot service (all session references)
+- Stream manager service
+- All test files
+
 **Testing Considerations**:
 - [ ] Unit tests for session creation without ticker
 - [ ] Verify sessionId format generation
 - [ ] Test workflow execution tracking
 - [ ] Ensure backward compatibility with existing session data (migration)
+- [ ] Update all imports throughout codebase
+- [ ] Verify TypeScript compilation after rename
 
 ---
 
@@ -140,22 +159,22 @@ class SessionOrchestratorService {
 // AFTER
 class SessionOrchestratorService {
   // NEW: Primary method - always returns a session
-  getOrCreateSession(chatId: number): AnalysisSession
+  getOrCreateSession(chatId: number): ChatSession
 
   // Get current session (returns null if STOPPED or doesn't exist)
-  getSession(chatId: number): AnalysisSession | null
+  getSession(chatId: number): ChatSession | null
 
   // Manual stop only (sets status to STOPPED)
   stopSession(chatId: number, reason?: string): void
 
-  // Track workflow execution within session
-  addWorkflowExecution(
+  // Track workflow execution within session (creates record, doesn't execute)
+  trackWorkflow(
     chatId: number,
     workflowType: WorkflowType,
     ticker?: string
   ): string  // Returns workflowId
 
-  completeWorkflowExecution(
+  completeWorkflow(
     chatId: number,
     workflowId: string,
     result: string
@@ -176,7 +195,7 @@ class SessionOrchestratorService {
 **Implementation Details**:
 
 ```typescript
-getOrCreateSession(chatId: number): AnalysisSession {
+getOrCreateSession(chatId: number): ChatSession {
   // 1. Check for existing ACTIVE session
   const existing = this.sessionRepository.findByChatId(chatId);
   if (existing && existing.status === SessionStatus.ACTIVE) {
@@ -185,7 +204,7 @@ getOrCreateSession(chatId: number): AnalysisSession {
 
   // 2. Create new session if none exists or previous was STOPPED
   const sessionId = this.generateSessionId(chatId);  // chat123-1234567890
-  const newSession: AnalysisSession = {
+  const newSession: ChatSession = {
     sessionId,
     chatId,
     status: SessionStatus.ACTIVE,
@@ -201,7 +220,7 @@ getOrCreateSession(chatId: number): AnalysisSession {
   return newSession;
 }
 
-addWorkflowExecution(
+trackWorkflow(
   chatId: number,
   workflowType: WorkflowType,
   ticker?: string
@@ -294,7 +313,8 @@ private initializeWorkflows() {
 
 **Files**:
 - `libs/agent/core/src/lib/agent.service.ts`
-- `libs/agent/core/src/lib/prompts/base-system-prompt.ts` (NEW)
+
+**Key Change**: Both workflows and conversations use the **same base system prompt**. No need for separate prompts.
 
 **New Method**:
 
@@ -304,58 +324,121 @@ export class AgentService {
 
   // Existing method - unchanged
   async executeWorkflow(
-    workflowType: WorkflowType,
     sessionId: string,
-    ticker: string,
-    userPrompt?: string,
-    options?: QueryOptions
-  ): Promise<void> {
-    // ... existing implementation
+    workflowType: WorkflowType,
+    params: WorkflowParams
+  ): Promise<AnalysisResult> {
+    // ... existing implementation (uses workflowConfig.systemPrompt)
   }
 
   // NEW method for freeform conversation
   async executeConversation(
     sessionId: string,
     userMessage: string,
-    conversationHistory: ConversationMessage[],
-    options?: QueryOptions
-  ): Promise<void> {
+    conversationHistory: ConversationMessage[]
+  ): Promise<string> {
     this.logger.log(`[${sessionId}] Starting conversation`);
-
-    // Emit connected event
-    this.eventEmitter.emit(
-      createEventName(StreamEventType.CONNECTED, sessionId),
-      {
-        sessionId,
-        type: StreamEventType.CONNECTED,
-        timestamp: new Date().toISOString(),
-      }
-    );
 
     // Build context from conversation history
     const contextMessages = this.buildConversationContext(conversationHistory);
 
-    // Execute query with base system prompt (NOT workflow-specific)
+    // Get workflow config (reuse for model settings)
+    const workflowConfig = this.workflowService.getConfig(WorkflowType.STOCK_ANALYSIS);
+
+    // Execute query - SAME systemPrompt as workflows
     const stream = query({
       prompt: userMessage,
-      systemPrompt: BASE_CONVERSATION_PROMPT,  // NEW: Base prompt for freeform chat
-      conversationHistory: contextMessages,
       options: {
-        model: this.configService.get('ANTHROPIC_MODEL'),
-        maxTurns: 20,
-        maxThinkingTokens: 10000,
+        systemPrompt: workflowConfig.systemPrompt,  // SAME prompt as workflows
+        model: workflowConfig.model,
+        maxThinkingTokens: workflowConfig.maxThinkingTokens,
+        maxTurns: workflowConfig.maxTurns,
         permissionMode: 'bypassPermissions',
         mcpServers: {
           'stock-analyzer': this.mcpServer,  // All tools available
         },
-        ...options,
+        conversationHistory: contextMessages,  // NEW: Pass conversation history
       },
     });
 
-    // Process stream (same as workflow)
-    await this.processStream(stream, sessionId);
+    // Process stream using shared method
+    const fullContent = await this.processStreamMessages(
+      stream,
+      sessionId,
+      '',  // ticker (empty for conversations)
+      'conversation',
+      true  // streamToClient
+    );
+
+    // Emit completion event
+    this.eventEmitter.emit(`stream.${sessionId}`, {
+      type: StreamEventType.COMPLETE,
+      sessionId,
+      timestamp: new Date().toISOString(),
+    });
 
     this.logger.log(`[${sessionId}] Conversation completed`);
+    return fullContent;
+  }
+
+  // NEW: Extract stream processing into shared private method
+  private async processStreamMessages(
+    stream: AsyncIterable<SDKMessage>,
+    sessionId: string,
+    ticker: string,
+    workflowType: WorkflowType | string,
+    streamToClient: boolean
+  ): Promise<string> {
+    let fullContent = '';
+    let totalTokens = 0;
+
+    for await (const message of stream) {
+      this.logger.log(`[${sessionId}] ━━━ Message Type: ${message.type} ━━━`);
+
+      try {
+        switch (message.type) {
+          case 'system':
+            if ('subtype' in message && message.subtype === 'init') {
+              this.handleSystemInitMessage(message as SDKSystemMessage, sessionId, ticker, streamToClient);
+            } else if ('subtype' in message && message.subtype === 'compact_boundary') {
+              this.handleCompactBoundaryMessage(message as SDKCompactBoundaryMessage, sessionId, ticker, streamToClient);
+            }
+            break;
+
+          case 'stream_event':
+            this.handlePartialAssistantMessage(message as SDKPartialAssistantMessage, sessionId, ticker, streamToClient);
+            break;
+
+          case 'assistant':
+            const assistantMsg = message as SDKAssistantMessage;
+            const textContent = this.handleAssistantMessage(assistantMsg, sessionId, ticker, workflowType, streamToClient);
+            fullContent += textContent;
+
+            // Track token usage
+            if (assistantMsg.message.usage) {
+              totalTokens += assistantMsg.message.usage.input_tokens + assistantMsg.message.usage.output_tokens;
+            }
+            break;
+
+          case 'user':
+            this.handleUserMessage(message as SDKUserMessage, sessionId, ticker, streamToClient);
+            break;
+
+          case 'result':
+            this.handleResultMessage(message as SDKResultMessage, sessionId, ticker, totalTokens, streamToClient);
+            break;
+
+          default:
+            this.handleUnknownMessage(message, sessionId);
+            break;
+        }
+      } catch (messageError) {
+        this.logger.error(`[${sessionId}] Error processing message:`, messageError);
+        // Continue processing other messages
+      }
+    }
+
+    return fullContent;
   }
 
   private buildConversationContext(
@@ -371,75 +454,57 @@ export class AgentService {
 }
 ```
 
-**Base Conversation Prompt**:
+**Implementation Notes**:
+- **Same system prompt** for both workflows and conversations (no separate prompt needed)
+- **NEW: Shared stream processing** - Extract stream processing into `processStreamMessages()` method
+- **Refactor existing code**: Update `executeQuery()` to also call `processStreamMessages()` (DRY principle)
+- Conversation mode has access to ALL tools (same as workflows)
+- Uses same model settings (maxThinkingTokens, maxTurns, etc.)
+- NEW: Passes `conversationHistory` to query options for context retention
+- Ticker parameter empty string `''` since conversations aren't ticker-specific
 
+**Refactoring Pattern**:
 ```typescript
-// libs/agent/core/src/lib/prompts/base-system-prompt.ts (NEW FILE)
-export const BASE_CONVERSATION_PROMPT = `
-You are a financial analysis assistant with access to real-time market data and valuation tools.
+// BEFORE (in executeQuery):
+for await (const message of stream) {
+  switch (message.type) { /* ... 60+ lines of code ... */ }
+}
+return fullContent;
 
-## Your Capabilities
-
-1. **Answer financial questions**: Explain concepts, interpret data, provide insights
-2. **Fetch company data**: Use fetch_company_data tool for real-time financial information
-3. **Perform valuations**: Use calculate_dcf tool for DCF analysis
-4. **Execute workflows**: Full stock analysis via structured workflows (when requested)
-
-## Available Tools
-
-- fetch_company_data: Get real-time financial data (income statements, balance sheets, ratios, etc.)
-- calculate_dcf: Perform discounted cash flow valuation
-- test_api_connection: Verify API connectivity
-
-## Guidelines
-
-- **Be conversational**: Respond naturally to user questions
-- **Provide context**: Reference previous messages in the conversation
-- **Use tools proactively**: Fetch data when needed to answer questions accurately
-- **Explain your reasoning**: Show your work when performing analysis
-- **Ask clarifying questions**: If user intent is unclear
-- **Stay on topic**: Focus on financial analysis and market data
-
-## Response Style
-
-- Concise but thorough
-- Use markdown formatting for clarity
-- Include numbers and metrics when relevant
-- Cite data sources (e.g., "According to latest 10-Q...")
-
-Remember: You're having an ongoing conversation. Build on previous context and maintain continuity.
-`;
+// AFTER (in both executeQuery and executeConversation):
+const fullContent = await this.processStreamMessages(stream, sessionId, ticker, workflowType, streamToClient);
+return fullContent;
 ```
 
-**Implementation Notes**:
-- Conversation mode has access to ALL tools (same as workflows)
-- Uses extended thinking (`maxThinkingTokens: 10000`)
-- Processes stream identically to workflows (same event emissions)
-- No workflow lifecycle (no phases, no completion state)
-- Context window management needed for long conversations
-
-**Context Management Strategy**:
-1. **Sliding window**: Keep last N messages (e.g., 10-20)
-2. **Token-based truncation**: Keep messages within token budget
-3. **Intelligent compaction**: Summarize older messages when context grows
-4. **Emit compaction event**: Notify user when context is compacted
+**Context Management**:
+- Sliding window: Keep last 10 messages from conversation history
+- SDK handles compaction automatically when context grows too large
+- Compaction events are emitted via existing handleCompactBoundaryMessage
+- Bot notifies user when compaction occurs (via COMPACTION event type)
 
 **Testing Considerations**:
 - [ ] Unit test: executeConversation with empty history
 - [ ] Unit test: executeConversation with conversation history
-- [ ] Unit test: buildConversationContext truncation
+- [ ] Unit test: buildConversationContext truncation (last 10 messages)
 - [ ] Integration test: Conversation with tool usage
 - [ ] Integration test: Multi-turn conversation with context retention
+- [ ] Integration test: Verify same system prompt used as workflows
 
 ---
 
 ## Phase 3: API Layer (Endpoints)
 
-### 3.1 Add Conversation Endpoint
+### 3.1 Rename Controller & Add Conversation Endpoint
 
 **Files**:
-- `libs/agent/api/src/lib/agent.controller.ts`
+- `libs/agent/api/src/lib/analysis.controller.ts` → **RENAME** to `agent.controller.ts`
 - `libs/agent/api/src/lib/dto/conversation.dto.ts` (NEW)
+
+**Why Rename?**
+- Current name "AnalysisController" is too narrow (only reflects workflows)
+- New name "AgentController" reflects both workflows AND conversations
+- Both are agent executions with SSE streaming
+- Unified controller is simpler than separate controllers
 
 **New DTO**:
 
@@ -473,90 +538,300 @@ export class ConversationRequestDto {
 }
 ```
 
-**New Endpoint**:
+**Updated Controller** (with both endpoints):
 
 ```typescript
-// libs/agent/api/src/lib/agent.controller.ts
+// libs/agent/api/src/lib/agent.controller.ts (RENAMED from analysis.controller.ts)
+
+/**
+ * Agent Controller - Handles workflow and conversation execution via SSE
+ */
 @Controller('api')
 export class AgentController {
+  private readonly logger = new Logger(AgentController.name);
 
-  // Existing workflow endpoint
-  @Post('analyze')
-  @Sse()
-  async executeWorkflow(@Body() dto: WorkflowRequestDto): Promise<Observable<MessageEvent>> {
-    // ... existing implementation
+  constructor(
+    private agentService: AgentService,
+    private streamService: AgentStreamService
+  ) {}
+
+  /**
+   * Execute Workflow with SSE Streaming
+   * Route: POST /api/workflow
+   */
+  @Post('workflow')
+  async executeWorkflow(
+    @Body() body: WorkflowRequest,
+    @Req() req: Request,
+    @Res() res: Response
+  ): Promise<void> {
+    // ... existing implementation (unchanged)
   }
 
-  // NEW: Conversation endpoint
+  /**
+   * Execute Conversation with SSE Streaming
+   * Route: POST /api/conversation (NEW)
+   */
   @Post('conversation')
-  @Sse()
   async executeConversation(
-    @Body() dto: ConversationRequestDto
-  ): Promise<Observable<MessageEvent>> {
-    const { sessionId, userMessage, conversationHistory } = dto;
+    @Body() body: ConversationRequestDto,
+    @Req() req: Request,
+    @Res() res: Response
+  ): Promise<void> {
+    const { sessionId, userMessage, conversationHistory } = body;
 
-    // Validate session exists and is ACTIVE
-    // (Handled by caller - Telegram bot)
-
-    // Start conversation execution
-    this.agentService.executeConversation(
-      sessionId,
-      userMessage,
-      conversationHistory
+    this.logger.log(
+      `[${sessionId}] Starting conversation with SSE streaming`
     );
 
-    // Return SSE stream (same pattern as workflow)
-    return new Observable<MessageEvent>((subscriber) => {
-      const eventHandlers = this.createEventHandlers(sessionId, subscriber);
+    // Set SSE headers (MUST be 200 for EventSource compatibility)
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
 
-      // Subscribe to events
-      this.eventEmitter.on(`analysis.connected.${sessionId}`, eventHandlers.onConnected);
-      this.eventEmitter.on(`analysis.chunk.${sessionId}`, eventHandlers.onChunk);
-      this.eventEmitter.on(`analysis.thinking.${sessionId}`, eventHandlers.onThinking);
-      this.eventEmitter.on(`analysis.tool.${sessionId}`, eventHandlers.onTool);
-      this.eventEmitter.on(`analysis.complete.${sessionId}`, eventHandlers.onComplete);
-      this.eventEmitter.on(`analysis.error.${sessionId}`, eventHandlers.onError);
+    // Register SSE connection
+    this.streamService.registerStream(sessionId, res);
 
-      // Cleanup on disconnect
-      return () => {
-        this.eventEmitter.removeListener(`analysis.connected.${sessionId}`, eventHandlers.onConnected);
-        // ... remove all listeners
-      };
+    // Send connected event
+    this.sendSseEvent(res, {
+      type: 'connected',
+      sessionId,
+      timestamp: new Date().toISOString()
     });
+
+    // Execute conversation (results stream via EventEmitter to StreamService)
+    this.agentService
+      .executeConversation(sessionId, userMessage, conversationHistory)
+      .then((result) => {
+        this.logger.log(`[${sessionId}] Conversation complete`);
+      })
+      .catch((error) => {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(`[${sessionId}] Conversation failed: ${errorMessage}`);
+
+        // Send error event
+        this.sendSseEvent(res, {
+          type: 'error',
+          message: errorMessage,
+          timestamp: new Date().toISOString()
+        });
+
+        // Clean up
+        this.streamService.closeStream(sessionId);
+      });
+
+    // Handle client disconnect
+    req.on('close', () => {
+      this.logger.log(`[${sessionId}] Client disconnected`);
+      this.streamService.closeStream(sessionId);
+    });
+  }
+
+  /**
+   * Helper method to send SSE events
+   * Centralizes the SSE format: data: {...}\n\n
+   */
+  private sendSseEvent(res: Response, data: Record<string, unknown>): void {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
   }
 }
 ```
 
 **Implementation Notes**:
-- Conversation endpoint returns SSE stream (identical format to workflow endpoint)
-- Same event types: connected, chunk, thinking, tool, complete, error
-- No PDF generation in conversation mode (unless explicitly requested via tool)
-- Validation happens at Telegram bot layer (session existence check)
+- **Rename file**: `analysis.controller.ts` → `agent.controller.ts`
+- **Rename class**: `AnalysisController` → `AgentController`
+- **Unified controller**: Both endpoints in same file (@Controller('api'))
+- **Routes**:
+  - POST `/api/workflow` (existing - update to use sendSseEvent)
+  - POST `/api/conversation` (new)
+- **NEW: Shared SSE helper** - Extract `res.write()` into `sendSseEvent()` private method
+- **Refactor existing code**: Update `executeWorkflow()` to also use `sendSseEvent()` (DRY principle)
+- **Same SSE pattern** as workflow endpoint (Express res/req, manual headers, AgentStreamService)
+- **Event types**: connected, chunk, thinking, tool, tool_result, result, complete, error
+- **No ticker parameter**: Pass empty string `''` to handlers since conversations aren't ticker-specific
+- **Promise-based**: `executeConversation()` returns `Promise<string>` (like executeWorkflow)
+- **StreamService integration**: Uses existing AgentStreamService to forward events to SSE
+
+**Refactoring Pattern**:
+```typescript
+// BEFORE (in executeWorkflow and executeConversation):
+res.write(`data: ${JSON.stringify({ type: 'connected', ... })}\n\n`);
+res.write(`data: ${JSON.stringify({ type: 'error', ... })}\n\n`);
+
+// AFTER (in both methods):
+this.sendSseEvent(res, { type: 'connected', ... });
+this.sendSseEvent(res, { type: 'error', ... });
+```
 
 **Testing Considerations**:
 - [ ] Unit test: DTO validation
-- [ ] Integration test: POST /api/conversation returns SSE stream
+- [ ] Integration test: POST /api/conversation returns SSE stream with correct headers
 - [ ] Integration test: Conversation with tool usage
+- [ ] Integration test: Client disconnect cleanup
 - [ ] E2E test: Full conversation flow from bot to agent
 
 ---
 
 ## Phase 4: Telegram Bot (User Interface)
 
-### 4.1 Add /new Command
+### 4.1 Centralize Bot Messages
+
+**Files**:
+- `libs/bot/common/src/lib/messages.ts` (NEW)
+
+**Why Centralize?**
+- Single source of truth for all user-facing messages
+- Easy to update message content and formatting
+- Consistent tone across all bot interactions
+- Easier to test and review messages
+- Future-proof for localization/i18n
+
+**Messages File**:
+
+```typescript
+// libs/bot/common/src/lib/messages.ts
+
+/**
+ * Type definition for bot messages
+ * Supports both static strings and parameterized message functions
+ */
+export interface BotMessagesType {
+  // Session management
+  NEW_SESSION: string;
+  NEW_SESSION_FAILED: string;
+  NO_ACTIVE_SESSION: string;
+
+  // Errors
+  GENERIC_ERROR: string;
+  UNABLE_TO_IDENTIFY_CHAT: string;
+  ANALYSIS_FAILED: (ticker: string) => string;
+  SESSION_STATUS_FAILED: string;
+  WAIT_FOR_RESPONSE: string;
+
+  // Conversation
+  CONTEXT_COMPACTED: string;
+  CONVERSATION_FAILED: string;
+
+  // Commands
+  ANALYZE_USAGE: string;
+  STARTING_ANALYSIS: (ticker: string) => string;
+
+  // Help
+  HELP_TEXT: string;
+}
+
+/**
+ * Centralized bot messages for consistent user communication
+ * All user-facing messages should be defined here
+ */
+export const BotMessages: BotMessagesType = {
+  // Session management
+  NEW_SESSION: `Started a new conversation session.
+
+You can:
+• Ask me any financial questions
+• Use /analyze TICKER for full stock analysis
+• Use /status to see current session info
+• Use /help for more commands`,
+
+  NEW_SESSION_FAILED: 'Failed to start new session. Please try again.',
+
+  NO_ACTIVE_SESSION: `No active session.
+
+Use /new to start a conversation or /analyze TICKER for stock analysis.`,
+
+  // Errors
+  GENERIC_ERROR: `Sorry, something went wrong. Try:
+• /new to start fresh
+• /status to check session
+• /help for assistance`,
+
+  UNABLE_TO_IDENTIFY_CHAT: 'Unable to identify chat. Please try again.',
+
+  ANALYSIS_FAILED: (ticker: string) =>
+    `Failed to start analysis for ${ticker}. Please try again.`,
+
+  SESSION_STATUS_FAILED: 'Failed to get session status.',
+
+  WAIT_FOR_RESPONSE: '⏳ Please wait for the current response to complete...',
+
+  // Conversation
+  CONTEXT_COMPACTED: `Context has grown large and was compacted to maintain performance.
+
+You can continue chatting, or use /new to start completely fresh.`,
+
+  CONVERSATION_FAILED: 'Failed to start conversation. Please try again.',
+
+  // Commands
+  ANALYZE_USAGE: `Usage: /analyze TICKER
+Example: /analyze AAPL`,
+
+  STARTING_ANALYSIS: (ticker: string) => `📊 Starting analysis for ${ticker}...`,
+
+  // Help
+  HELP_TEXT: `Stock Analyzer Bot
+
+Commands:
+/analyze TICKER - Full stock analysis
+/status - View session info
+/new or /reset - Start fresh session
+/help - Show this message
+
+You can also ask me any financial questions directly!`,
+};
+```
+
+**Export from index**:
+
+```typescript
+// libs/bot/common/src/index.ts
+export * from './lib/messages';
+```
+
+---
+
+### 4.2 Add /new Command
 
 **Files**:
 - `libs/bot/telegram/src/lib/telegram-bot.service.ts`
 
-**New Command Handler**:
+**Update setupBot() to register new commands**:
 
 ```typescript
 // libs/bot/telegram/src/lib/telegram-bot.service.ts
+import { BotMessages } from '@stock-analyzer/bot/common';
+
 export class TelegramBotService {
 
-  @Command('new')
-  async handleNewCommand(@Ctx() ctx: Context): Promise<void> {
-    const chatId = ctx.chat?.id;
+  private async setupBot() {
+    // Command handlers
+    this.bot.command('start', this.handleStartCommand.bind(this));
+    this.bot.command('analyze', this.handleAnalyzeCommand.bind(this));
+    this.bot.command('stop', this.handleStopCommand.bind(this));
+    this.bot.command('status', this.handleStatusCommand.bind(this));
+    this.bot.command('help', this.handleHelpCommand.bind(this));
+    this.bot.command('new', this.handleNewCommand.bind(this));      // NEW
+    this.bot.command('reset', this.handleResetCommand.bind(this));  // NEW (alias)
+
+    // Message handlers - route to conversation or analysis
+    this.bot.on('text', this.handleTextMessage.bind(this));
+
+    // Error handling
+    this.bot.catch((err: unknown, ctx) => {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      this.logger.error(`Bot error: ${errorMessage}`);
+      ctx.reply('An error occurred. Please try again.').catch(() => {
+        // Ignore reply failures
+      });
+    });
+  }
+
+  // NEW: Handler for /new command
+  private async handleNewCommand(ctx: Context) {
+    const chatId = ctx.chat?.id.toString();
     if (!chatId) return;
 
     try {
@@ -571,23 +846,15 @@ export class TelegramBotService {
       const newSession = this.sessionOrchestrator.getOrCreateSession(chatId);
       this.logger.log(`[${chatId}] Created new session: ${newSession.sessionId}`);
 
-      await ctx.reply(
-        'Started a new conversation session.\n\n' +
-        'You can:\n' +
-        '• Ask me any financial questions\n' +
-        '• Use /analyze TICKER for full stock analysis\n' +
-        '• Use /status to see current session info\n' +
-        '• Use /help for more commands'
-      );
+      await ctx.reply(BotMessages.NEW_SESSION);
     } catch (error) {
       this.logger.error(`[${chatId}] Error starting new session:`, error);
-      await ctx.reply('Failed to start new session. Please try again.');
+      await ctx.reply(BotMessages.NEW_SESSION_FAILED);
     }
   }
 
-  @Command('reset')
-  async handleResetCommand(@Ctx() ctx: Context): Promise<void> {
-    // Alias for /new command
+  // NEW: Alias for /new command
+  private async handleResetCommand(ctx: Context) {
     return this.handleNewCommand(ctx);
   }
 }
@@ -607,84 +874,51 @@ export class TelegramBotService {
 
 ---
 
-### 4.2 Update Text Handler (Default to Conversation)
+### 4.3 Update Text Handler (Default to Conversation)
 
 **Files**:
 - `libs/bot/telegram/src/lib/telegram-bot.service.ts`
 
-**Updated Handler**:
+**Updated handleTextMessage() - already registered in setupBot()**:
 
 ```typescript
 // libs/bot/telegram/src/lib/telegram-bot.service.ts
-@On('text')
-async handleText(@Ctx() ctx: Context): Promise<void> {
-  const chatId = ctx.chat?.id;
-  const text = (ctx.message as any)?.text;
+// Note: Already registered via this.bot.on('text', this.handleTextMessage.bind(this))
 
-  if (!chatId || !text || text.startsWith('/')) {
-    return; // Ignore commands (handled separately)
+private async handleTextMessage(ctx: Context) {
+  const message = ctx.message as any;
+  const text = message?.text || '';
+  const chatId = ctx.chat?.id.toString();
+
+  if (!chatId) return;
+
+  // Check if bot is currently responding - block input
+  if (this.streamManager.isResponding(chatId)) {
+    await ctx.reply(BotMessages.WAIT_FOR_RESPONSE);
+    return;
   }
 
   try {
-    // STEP 1: Get or create session (always have a session)
-    const session = this.sessionOrchestrator.getOrCreateSession(chatId);
-    const sessionId = session.sessionId;
+    await ctx.sendChatAction('typing');
 
-    this.logger.log(`[${chatId}] Processing text in session: ${sessionId}`);
-
-    // STEP 2: Add user message to conversation history
-    this.sessionOrchestrator.addMessage(
-      chatId,
-      MessageRole.USER,
-      text
-    );
-
-    // STEP 3: Route to conversation mode (default behavior)
-    await this.startConversation(ctx, sessionId, text, session.conversationHistory);
-
+    // Execute conversation (StreamManager handles session, history, and execution)
+    await this.streamManager.executeConversation(chatId, text, ctx);
   } catch (error) {
-    this.logger.error(`[${chatId}] Error handling text:`, error);
-    await ctx.reply(
-      'Sorry, something went wrong. Try:\n' +
-      '• /new to start fresh\n' +
-      '• /status to check session\n' +
-      '• /help for assistance'
-    );
+    this.logger.error(`[${chatId}] Error executing conversation:`, error);
+    await ctx.reply(BotMessages.CONVERSATION_FAILED);
   }
-}
-
-private async startConversation(
-  ctx: Context,
-  sessionId: string,
-  userMessage: string,
-  conversationHistory: ConversationMessage[]
-): Promise<void> {
-  const chatId = ctx.chat?.id;
-  if (!chatId) return;
-
-  // Show typing indicator
-  await ctx.sendChatAction('typing');
-
-  // Start conversation stream via stream manager
-  await this.streamManager.startConversation(
-    sessionId,
-    chatId,
-    userMessage,
-    conversationHistory,
-    ctx
-  );
 }
 ```
 
 **Key Changes**:
-- `getOrCreateSession()` ensures session always exists
+- **Simplified bot logic** - Single method call to execute conversation
+- StreamManager handles all implementation details internally (session, history, tracking)
 - All non-command text routes to conversation mode by default
 - No explicit workflow detection needed (user uses commands for workflows)
-- Simplified routing logic (no mode switching)
 
 **Implementation Notes**:
-- Typing indicator shows while processing
-- Conversation history is passed to agent for context
+- Bot only contains business logic (user sent a message → execute conversation)
+- Service layer handles session management, history tracking, and execution
 - Session persists across all interactions
 - No conflict detection needed (session is chat-scoped, not ticker-scoped)
 
@@ -696,88 +930,78 @@ private async startConversation(
 
 ---
 
-### 4.3 Update Workflow Commands
+### 4.4 Update Workflow Commands
 
 **Files**:
 - `libs/bot/telegram/src/lib/telegram-bot.service.ts`
 
-**Updated /analyze Command**:
+**Updated handleAnalyzeCommand() - already registered in setupBot()**:
 
 ```typescript
-@Command('analyze')
-async handleAnalyzeCommand(@Ctx() ctx: Context): Promise<void> {
-  const chatId = ctx.chat?.id;
-  const text = (ctx.message as any)?.text;
+// libs/bot/telegram/src/lib/telegram-bot.service.ts
+// Note: Already registered via this.bot.command('analyze', this.handleAnalyzeCommand.bind(this))
 
-  if (!chatId) return;
+private async handleAnalyzeCommand(ctx: Context) {
+  const message = ctx.message as any;
+  const text = message?.text || '';
+  const ticker = text.split(' ')[1]?.toUpperCase();
+  const chatId = ctx.chat?.id.toString();
 
-  // Parse ticker from command
-  const match = text?.match(/^\/analyze\s+([A-Z]{1,5})$/i);
-  if (!match) {
-    await ctx.reply(
-      'Usage: /analyze TICKER\n' +
-      'Example: /analyze AAPL'
-    );
+  if (!ticker) {
+    await ctx.reply(BotMessages.ANALYZE_USAGE);
     return;
   }
 
-  const ticker = match[1].toUpperCase();
+  if (!chatId) {
+    await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+    return;
+  }
+
+  // Check if bot is currently responding
+  if (this.streamManager.isResponding(chatId)) {
+    await ctx.reply(BotMessages.WAIT_FOR_RESPONSE);
+    return;
+  }
 
   try {
-    // STEP 1: Get or create session (workflow executes within session)
-    const session = this.sessionOrchestrator.getOrCreateSession(chatId);
-    const sessionId = session.sessionId;
+    await ctx.sendChatAction('typing');
+    await ctx.reply(BotMessages.STARTING_ANALYSIS(ticker));
 
-    this.logger.log(`[${chatId}] Starting workflow for ${ticker} in session: ${sessionId}`);
-
-    // STEP 2: Track workflow execution
-    const workflowId = this.sessionOrchestrator.addWorkflowExecution(
+    // Execute workflow (StreamManager handles session, tracking, and execution)
+    await this.streamManager.executeWorkflow(
       chatId,
       WorkflowType.STOCK_ANALYSIS,
-      ticker
-    );
-
-    // STEP 3: Start workflow stream
-    await this.streamManager.startWorkflow(
-      WorkflowType.STOCK_ANALYSIS,
-      sessionId,
       ticker,
-      ctx,
-      workflowId  // Pass workflowId for tracking
+      ctx
     );
-
-    // Note: Workflow completion updates workflowExecution.completedAt
-    // Session remains ACTIVE after workflow completes
-
   } catch (error) {
-    this.logger.error(`[${chatId}] Error starting workflow:`, error);
-    await ctx.reply(`Failed to start analysis for ${ticker}. Please try again.`);
+    this.logger.error(`[${chatId}] Error executing workflow:`, error);
+    await ctx.reply(BotMessages.ANALYSIS_FAILED(ticker));
   }
 }
 ```
 
 **Key Changes**:
-- Uses `getOrCreateSession()` instead of creating ticker-specific session
-- Tracks workflow execution via `addWorkflowExecution()`
+- **Simplified bot logic** - Single method call to execute workflow
+- StreamManager handles all implementation details internally
 - Session persists after workflow completes (no status change)
 - Workflow is an event within the session, not a state transition
 
-**Updated /status Command**:
+**Updated handleStatusCommand() - already registered in setupBot()**:
 
 ```typescript
-@Command('status')
-async handleStatusCommand(@Ctx() ctx: Context): Promise<void> {
-  const chatId = ctx.chat?.id;
+// libs/bot/telegram/src/lib/telegram-bot.service.ts
+// Note: Already registered via this.bot.command('status', this.handleStatusCommand.bind(this))
+
+private async handleStatusCommand(ctx: Context) {
+  const chatId = ctx.chat?.id.toString();
   if (!chatId) return;
 
   try {
     const session = this.sessionOrchestrator.getSession(chatId);
 
     if (!session) {
-      await ctx.reply(
-        'No active session.\n\n' +
-        'Use /new to start a conversation or /analyze TICKER for stock analysis.'
-      );
+      await ctx.reply(BotMessages.NO_ACTIVE_SESSION);
       return;
     }
 
@@ -810,7 +1034,7 @@ async handleStatusCommand(@Ctx() ctx: Context): Promise<void> {
 
   } catch (error) {
     this.logger.error(`[${chatId}] Error getting status:`, error);
-    await ctx.reply('Failed to get session status.');
+    await ctx.reply(BotMessages.SESSION_STATUS_FAILED);
   }
 }
 ```
@@ -824,48 +1048,151 @@ async handleStatusCommand(@Ctx() ctx: Context): Promise<void> {
 
 ---
 
-### 4.4 Update Stream Manager
+### 4.5 Update Stream Manager
 
 **Files**:
 - `libs/bot/telegram/src/lib/stream-manager.service.ts`
 
-**New Conversation Stream Method**:
+**Add import for centralized messages and session orchestrator**:
 
 ```typescript
+// libs/bot/telegram/src/lib/stream-manager.service.ts
+import { BotMessages } from '@stock-analyzer/bot/common';
+import { SessionOrchestrator } from '@stock-analyzer/bot/sessions';
+
 export class StreamManagerService {
 
-  // Existing workflow stream method - mostly unchanged
-  async startWorkflow(
+  constructor(
+    private configService: ConfigService,
+    private sessionOrchestrator: SessionOrchestrator  // NEW: Inject session orchestrator
+  ) {}
+
+  // NEW: High-level method - bot calls this (business logic only)
+  async executeWorkflow(
+    chatId: string,
+    workflowType: WorkflowType,
+    ticker: string,
+    ctx: Context
+  ): Promise<void> {
+    // 1. Get or create session
+    const session = this.sessionOrchestrator.getOrCreateSession(chatId);
+    const sessionId = session.sessionId;
+
+    // 2. Track workflow execution
+    const workflowId = this.sessionOrchestrator.trackWorkflow(
+      chatId,
+      workflowType,
+      ticker
+    );
+
+    // 3. Mark as responding
+    this.startResponding(chatId);
+
+    // 4. Start workflow stream (internal method)
+    await this.startWorkflowStream(
+      workflowType,
+      sessionId,
+      ticker,
+      ctx,
+      workflowId
+    );
+  }
+
+  // INTERNAL: Low-level method - handles SSE stream
+  private async startWorkflowStream(
     workflowType: WorkflowType,
     sessionId: string,
     ticker: string,
     ctx: Context,
-    workflowId?: string  // NEW: Optional workflowId for tracking
+    workflowId: string
   ): Promise<void> {
-    // ... existing implementation
+    const agentUrl = this.configService.get('AGENT_SERVICE_URL');
+    const url = `${agentUrl}/api/workflow`;
+    const chatId = ctx.chat.id.toString();
 
-    // On COMPLETE event, mark workflow as completed
-    eventSource.addEventListener(StreamEventType.COMPLETE, (event) => {
-      const data = JSON.parse(event.data);
+    try {
+      // Create EventSource for SSE stream
+      const eventSource = new EventSource(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          workflowType,
+          params: { ticker, userPrompt: 'Perform comprehensive stock analysis' },
+        }),
+      });
 
-      if (workflowId) {
+      this.activeStreams.set(chatId, eventSource);
+      this.streamBuffer.set(chatId, '');
+
+      // ... existing event handlers
+
+      // On COMPLETE event, mark workflow as completed
+      eventSource.addEventListener(StreamEventType.COMPLETE, async (event) => {
+        const data = JSON.parse(event.data);
+
         // Mark workflow execution as completed
-        this.sessionOrchestrator.completeWorkflowExecution(
-          ctx.chat.id,
+        this.sessionOrchestrator.completeWorkflow(
+          chatId,
           workflowId,
           this.streamBuffer.get(chatId) || ''
         );
-      }
 
-      // Session stays ACTIVE (don't complete session)
-      this.closeStream(chatId);
-    });
+        // Stop responding
+        this.stopResponding(chatId);
+
+        // Session stays ACTIVE (don't complete session)
+        this.closeStream(chatId);
+      });
+
+      eventSource.addEventListener(StreamEventType.ERROR, async (event) => {
+        const data = JSON.parse(event.data);
+        this.logger.error(`[${chatId}] Workflow error:`, data.message);
+
+        // Stop responding on error
+        this.stopResponding(chatId);
+
+        await ctx.reply(BotMessages.ANALYSIS_FAILED(ticker));
+        this.closeStream(chatId);
+      });
+    } catch (error) {
+      this.logger.error(`[${chatId}] Failed to start workflow stream:`, error);
+      this.stopResponding(chatId);
+      throw error;  // Propagate to bot handler
+    }
   }
 
-  // NEW: Conversation stream method
-  async startConversation(
+  // NEW: High-level conversation method - bot calls this
+  async executeConversation(
+    chatId: string,
+    userMessage: string,
+    ctx: Context
+  ): Promise<void> {
+    // 1. Get or create session
+    const session = this.sessionOrchestrator.getOrCreateSession(chatId);
+    const sessionId = session.sessionId;
+    const conversationHistory = session.conversationHistory;
+
+    // 2. Add user message to history
+    this.sessionOrchestrator.addMessage(chatId, MessageRole.USER, userMessage);
+
+    // 3. Mark as responding
+    this.startResponding(chatId);
+
+    // 4. Start conversation stream (internal method)
+    await this.startConversationStream(
+      sessionId,
+      chatId,
+      userMessage,
+      conversationHistory,
+      ctx
+    );
+  }
+
+  // INTERNAL: Low-level conversation stream method
+  private async startConversationStream(
     sessionId: string,
-    chatId: number,
+    chatId: string,
     userMessage: string,
     conversationHistory: ConversationMessage[],
     ctx: Context
@@ -909,10 +1236,7 @@ export class StreamManagerService {
 
       eventSource.addEventListener(StreamEventType.COMPACTION, async (event) => {
         // NEW: Handle context compaction
-        await ctx.reply(
-          'Context has grown large and was compacted to maintain performance.\n\n' +
-          'You can continue chatting, or use /new to start completely fresh.'
-        );
+        await ctx.reply(BotMessages.CONTEXT_COMPACTED);
       });
 
       eventSource.addEventListener(StreamEventType.COMPLETE, async (event) => {
@@ -947,7 +1271,7 @@ export class StreamManagerService {
 
     } catch (error) {
       this.logger.error(`[${chatId}] Failed to start conversation stream:`, error);
-      await ctx.reply('Failed to start conversation. Please try again.');
+      await ctx.reply(BotMessages.CONVERSATION_FAILED);
     }
   }
 
@@ -963,12 +1287,20 @@ export class StreamManagerService {
 ```
 
 **Key Changes**:
-- New `startConversation()` method calls `/api/conversation` endpoint
-- Handles same event types as workflow (connected, thinking, chunk, tool, complete, error)
+- **NEW: `executeWorkflow()` and `executeConversation()`** - High-level methods for bot
+- **Bot simplification** - Bot only calls one method, service handles all details
+- **Session management moved to service layer** - Bot doesn't touch SessionOrchestrator
+- **Private stream methods** - `startWorkflowStream()` and `startConversationStream()` are internal
+- Handles same event types as before (connected, thinking, chunk, tool, complete, error)
 - NEW: Handles `compaction` event to notify user of context compression
-- No PDF generation in conversation mode (unless tool explicitly called)
-- Session remains ACTIVE after conversation completes
-- Adds assistant message to conversation history
+- Session remains ACTIVE after workflow/conversation completes
+- Tracks workflow execution and adds messages to conversation history automatically
+
+**Design Rationale**:
+- **Single Responsibility** - Bot handles UI/UX, StreamManager handles execution logic
+- **Encapsulation** - Implementation details (session, tracking) hidden from bot
+- **Maintainability** - Changes to tracking logic don't affect bot code
+- **Testability** - Service layer can be tested independently
 
 **Testing Considerations**:
 - [ ] Test conversation stream establishment
@@ -989,8 +1321,8 @@ export class StreamManagerService {
 - [ ] getOrCreateSession creates new session when previous was STOPPED
 - [ ] getSession returns null for STOPPED session
 - [ ] stopSession changes status to STOPPED
-- [ ] addWorkflowExecution adds workflow to session
-- [ ] completeWorkflowExecution marks workflow as complete
+- [ ] trackWorkflow adds workflow to session
+- [ ] completeWorkflow marks workflow as complete
 - [ ] addMessage adds message to conversation history
 
 **Agent Service Tests** (`libs/agent/core/src/lib/agent.service.spec.ts`):
@@ -1275,22 +1607,24 @@ If critical issues are detected:
 ## Appendix: File Checklist
 
 ### Files to Create
-- [ ] `libs/agent/core/src/lib/prompts/base-system-prompt.ts`
-- [ ] `libs/agent/api/src/lib/dto/conversation.dto.ts`
-- [ ] `scripts/migrate-sessions.ts`
-- [ ] `docs/SESSION_PERSISTENT_CONVERSATION_REFACTORING.md` (this file)
+- [ ] `libs/agent/api/src/lib/dto/conversation.dto.ts` (ConversationRequestDto, ConversationMessageDto)
+- [ ] `scripts/migrate-sessions.ts` (Database migration script)
+- [ ] `docs/PERSISTENT_CHAT_SESSIONS_REFACTORING.md` (this file)
+
+### Files to Rename
+- [ ] `libs/agent/api/src/lib/analysis.controller.ts` → `agent.controller.ts` (Rename class: AnalysisController → AgentController)
 
 ### Files to Modify
-- [ ] `libs/bot/sessions/src/lib/session-store/interfaces/session.interface.ts`
-- [ ] `libs/bot/sessions/src/lib/session-store/session-orchestrator.service.ts`
-- [ ] `libs/shared/types/src/lib/enums.ts`
-- [ ] `libs/agent/core/src/lib/workflows/workflow-registry.ts`
-- [ ] `libs/agent/core/src/lib/agent.service.ts`
-- [ ] `libs/agent/api/src/lib/agent.controller.ts`
-- [ ] `libs/bot/telegram/src/lib/telegram-bot.service.ts`
-- [ ] `libs/bot/telegram/src/lib/stream-manager.service.ts`
-- [ ] `CLAUDE.md`
-- [ ] `README.md`
+- [ ] `libs/bot/sessions/src/lib/session-store/interfaces/session.interface.ts` (Rename AnalysisSession → ChatSession)
+- [ ] `libs/bot/sessions/src/lib/session-store/session-orchestrator.service.ts` (Add getOrCreateSession, remove completeSession)
+- [ ] `libs/shared/types/src/lib/enums.ts` (Remove WorkflowType.CONVERSATION)
+- [ ] `libs/agent/core/src/lib/workflows/workflow-registry.ts` (Remove conversation workflow config)
+- [ ] `libs/agent/core/src/lib/agent.service.ts` (Add executeConversation + processStreamMessages, refactor executeQuery)
+- [ ] `libs/agent/api/src/lib/agent.controller.ts` (Add conversation endpoint, update @Controller to 'api')
+- [ ] `libs/bot/telegram/src/lib/telegram-bot.service.ts` (Add /new command, update text handler)
+- [ ] `libs/bot/telegram/src/lib/stream-manager.service.ts` (Add startConversation method)
+- [ ] `CLAUDE.md` (Update session management documentation)
+- [ ] `README.md` (Add session management section)
 
 ### Files to Delete
 - [ ] Any conversation workflow configuration files

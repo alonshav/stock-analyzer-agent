@@ -883,4 +883,304 @@ describe('AgentService', () => {
       expect(result.executiveSummary).toBe('Done');
     });
   });
+
+  describe('executeConversation', () => {
+    it('should execute conversation with empty history', async () => {
+      const sessionId = 'test-conv-empty';
+      const userMessage = 'What is a P/E ratio?';
+
+      mockQuery.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'text',
+                  text: 'P/E ratio is the price-to-earnings ratio...',
+                },
+              ],
+            },
+          };
+        })()
+      );
+
+      const result = await service.executeConversation(sessionId, userMessage, []);
+
+      expect(result).toBe('P/E ratio is the price-to-earnings ratio...');
+      // Verify query was called (details may vary based on prompt construction)
+      expect(mockQuery).toHaveBeenCalled();
+    });
+
+    it('should build context from conversation history', async () => {
+      const sessionId = 'test-conv-history';
+      const userMessage = 'What about MSFT?';
+      const history = [
+        { role: 'user' as const, content: 'Tell me about AAPL' },
+        { role: 'assistant' as const, content: 'AAPL is Apple Inc...' },
+      ];
+
+      mockQuery.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'MSFT is Microsoft...' }],
+            },
+          };
+        })()
+      );
+
+      const result = await service.executeConversation(
+        sessionId,
+        userMessage,
+        history
+      );
+
+      expect(result).toBe('MSFT is Microsoft...');
+
+      // Verify prompt includes context
+      const queryCall = mockQuery.mock.calls[0][0];
+      expect(queryCall.prompt).toContain('Previous conversation');
+      expect(queryCall.prompt).toContain('Tell me about AAPL');
+      expect(queryCall.prompt).toContain('AAPL is Apple Inc');
+    });
+
+    it('should truncate conversation history to last 10 messages', async () => {
+      const sessionId = 'test-conv-truncate';
+      const userMessage = 'Current question';
+
+      // Create 15 messages (should keep only last 10)
+      const history = Array.from({ length: 15 }, (_, i) => ({
+        role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: `Message ${i}`,
+      }));
+
+      mockQuery.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Response' }],
+            },
+          };
+        })()
+      );
+
+      await service.executeConversation(sessionId, userMessage, history);
+
+      const queryCall = mockQuery.mock.calls[0][0];
+      const promptContent = queryCall.prompt;
+
+      // Should include last 10 messages (Message 5-14)
+      expect(promptContent).toContain('Message 5');
+      expect(promptContent).toContain('Message 14');
+      // Should NOT include first 5 messages
+      expect(promptContent).not.toContain('Message 0');
+      expect(promptContent).not.toContain('Message 4');
+    });
+
+    it('should emit COMPLETE event on conversation finish', async () => {
+      const sessionId = 'test-conv-complete';
+
+      mockQuery.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Done' }],
+            },
+          };
+        })()
+      );
+
+      await service.executeConversation(sessionId, 'test message', []);
+
+      expect(emitSpy).toHaveBeenCalledWith(
+        `stream.${sessionId}`,
+        expect.objectContaining({
+          type: StreamEventType.COMPLETE,
+          sessionId,
+        })
+      );
+    });
+
+    it('should emit ERROR event on conversation failure', async () => {
+      const sessionId = 'test-conv-error';
+
+      mockQuery.mockImplementation(() => {
+        throw new Error('Conversation failed');
+      });
+
+      await expect(
+        service.executeConversation(sessionId, 'test', [])
+      ).rejects.toThrow('Conversation failed');
+
+      expect(emitSpy).toHaveBeenCalledWith(
+        `stream.${sessionId}`,
+        expect.objectContaining({
+          type: StreamEventType.ERROR,
+          sessionId,
+          message: 'Conversation failed',
+        })
+      );
+    });
+
+    it('should handle tool usage in conversations', async () => {
+      const sessionId = 'test-conv-tools';
+
+      mockQuery.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'conv_tool_1',
+                  name: 'mcp__stock-analyzer__fetch_company_data',
+                  input: { ticker: 'AAPL' },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: 'conv_tool_1',
+                  content: [{ type: 'text', text: '{"data": "test"}' }],
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Based on the data...' }],
+            },
+          };
+        })()
+      );
+
+      const result = await service.executeConversation(
+        sessionId,
+        'Tell me about AAPL',
+        []
+      );
+
+      expect(result).toBe('Based on the data...');
+      expect(emitSpy).toHaveBeenCalledWith(
+        `stream.${sessionId}`,
+        expect.objectContaining({
+          type: StreamEventType.TOOL,
+          toolName: 'mcp__stock-analyzer__fetch_company_data',
+        })
+      );
+    });
+
+    it('should emit COMPACTION event during long conversations', async () => {
+      const sessionId = 'test-conv-compaction';
+
+      mockQuery.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'system',
+            subtype: 'compact_boundary',
+            compact_metadata: {
+              trigger: 'auto',
+              pre_tokens: 60000,
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Response after compaction' }],
+            },
+          };
+        })()
+      );
+
+      await service.executeConversation(sessionId, 'Long question', []);
+
+      expect(emitSpy).toHaveBeenCalledWith(
+        `stream.${sessionId}`,
+        expect.objectContaining({
+          type: StreamEventType.COMPACTION,
+          sessionId,
+          trigger: 'auto',
+        })
+      );
+    });
+
+    it('should use same system prompt as workflows', async () => {
+      const sessionId = 'test-conv-prompt';
+
+      mockQuery.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Response' }],
+            },
+          };
+        })()
+      );
+
+      await service.executeConversation(sessionId, 'test', []);
+
+      expect(workflowService.getConfig).toHaveBeenCalledWith(
+        WorkflowType.FULL_ANALYSIS
+      );
+
+      // Verify system prompt is used (actual content may be longer than mock)
+      const queryCall = mockQuery.mock.calls[0][0];
+      expect(queryCall.options.systemPrompt).toContain('analyst');
+    });
+
+    it('should accumulate all text content from multiple assistant messages', async () => {
+      const sessionId = 'test-conv-accumulate';
+
+      mockQuery.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Part 1. ' }],
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Part 2. ' }],
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Part 3.' }],
+            },
+          };
+        })()
+      );
+
+      const result = await service.executeConversation(sessionId, 'test', []);
+
+      expect(result).toBe('Part 1. Part 2. Part 3.');
+    });
+  });
 });

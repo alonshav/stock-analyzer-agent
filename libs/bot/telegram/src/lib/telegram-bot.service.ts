@@ -4,6 +4,7 @@ import { Telegraf, Context } from 'telegraf';
 import { StreamManagerService } from './stream-manager.service';
 import { SessionOrchestrator } from '@stock-analyzer/bot/sessions';
 import { WorkflowType } from '@stock-analyzer/shared/types';
+import { BotMessages } from '@stock-analyzer/bot/common';
 
 @Injectable()
 export class TelegramBotService implements OnApplicationBootstrap {
@@ -59,20 +60,26 @@ export class TelegramBotService implements OnApplicationBootstrap {
     this.bot.command('stop', this.handleStopCommand.bind(this));
     this.bot.command('status', this.handleStatusCommand.bind(this));
     this.bot.command('help', this.handleHelpCommand.bind(this));
+    this.bot.command('new', this.handleNewCommand.bind(this));      // NEW
+    this.bot.command('reset', this.handleResetCommand.bind(this));  // NEW (alias)
 
-    // Message handlers - route to conversation or analysis
+    // Message handlers - route to conversation
     this.bot.on('text', this.handleTextMessage.bind(this));
 
     // Error handling
     this.bot.catch((err: unknown, ctx) => {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       this.logger.error(`Bot error: ${errorMessage}`);
-      ctx.reply('An error occurred. Please try again.').catch(() => {
+      ctx.reply(BotMessages.GENERIC_ERROR).catch(() => {
         // Ignore reply failures
       });
     });
   }
 
+  /**
+   * /analyze TICKER - Execute workflow
+   * Simplified: Single method call to StreamManager
+   */
   private async handleAnalyzeCommand(ctx: Context) {
     const message = ctx.message as any;
     const text = message?.text || '';
@@ -80,67 +87,47 @@ export class TelegramBotService implements OnApplicationBootstrap {
     const chatId = ctx.chat?.id.toString();
 
     if (!ticker) {
-      await ctx.reply('Please provide a ticker symbol. Example: /analyze AAPL');
+      await ctx.reply(BotMessages.ANALYZE_USAGE);
       return;
     }
 
     if (!chatId) {
-      await ctx.reply('Unable to identify chat. Please try again.');
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
       return;
     }
 
     // Check if bot is currently responding
     if (this.streamManager.isResponding(chatId)) {
-      await ctx.reply('⏳ Please wait for the current response to complete...');
+      await ctx.reply(BotMessages.WAIT_FOR_RESPONSE);
       return;
     }
 
     try {
       await ctx.sendChatAction('typing');
-      await ctx.reply(`📊 Starting analysis for ${ticker}...`);
+      await ctx.reply(BotMessages.STARTING_ANALYSIS(ticker));
 
-      // Get or create session
-      let session = this.sessionOrchestrator.getActiveSession(chatId) ||
-                    this.sessionOrchestrator.getCompletedSession(chatId);
-
-      if (!session) {
-        session = this.sessionOrchestrator.createSession(chatId, ticker);
-        this.logger.log(`Created session ${session.sessionId} for chat ${chatId}, ticker ${ticker}`);
-      } else {
-        // Update ticker if different
-        this.logger.log(`Using existing session ${session.sessionId}, updating ticker to ${ticker}`);
-        // Note: We'd need to add a method to update ticker if needed
-      }
-
-      // Mark as responding
-      this.streamManager.startResponding(chatId);
-
-      // Start streaming from Agent service
-      await this.streamManager.startStream({
+      // Execute workflow (StreamManager handles session, tracking, and execution)
+      await this.streamManager.executeWorkflow(
         chatId,
+        WorkflowType.FULL_ANALYSIS,
+        ticker,
         ctx,
-        agentUrl: this.agentUrl,
-        workflowRequest: {
-          sessionId: session.sessionId,
-          workflowType: WorkflowType.FULL_ANALYSIS,
-          params: {
-            ticker,
-            userPrompt: 'Perform a comprehensive stock analysis',
-          },
-        },
-      });
+        this.agentUrl
+      );
     } catch (error) {
-      this.logger.error('Failed to start analysis:', error);
-      this.streamManager.stopResponding(chatId);
-      await ctx.reply('Failed to start analysis. Please try again.');
+      this.logger.error(`[${chatId}] Error executing workflow:`, error);
+      await ctx.reply(BotMessages.ANALYSIS_FAILED(ticker));
     }
   }
 
+  /**
+   * /stop - Stop current response
+   */
   private async handleStopCommand(ctx: Context) {
     const chatId = ctx.chat?.id.toString();
 
     if (!chatId) {
-      await ctx.reply('Unable to identify chat. Please try again.');
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
       return;
     }
 
@@ -153,7 +140,7 @@ export class TelegramBotService implements OnApplicationBootstrap {
       this.streamManager.stopResponding(chatId);
 
       // Stop session in SessionOrchestrator
-      this.sessionOrchestrator.stopSession(chatId);
+      this.sessionOrchestrator.stopSession(chatId, 'User stopped response');
 
       this.logger.log(`Stopped response for chat ${chatId}`);
       await ctx.reply('❌ Stopped.');
@@ -162,6 +149,46 @@ export class TelegramBotService implements OnApplicationBootstrap {
     }
   }
 
+  /**
+   * /new - Start fresh session
+   */
+  private async handleNewCommand(ctx: Context) {
+    const chatId = ctx.chat?.id.toString();
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+      return;
+    }
+
+    try {
+      // Stop current session (if exists)
+      const currentSession = this.sessionOrchestrator.getSession(chatId);
+      if (currentSession) {
+        this.sessionOrchestrator.stopSession(chatId, 'User started new session');
+        this.logger.log(`[${chatId}] Stopped session: ${currentSession.sessionId}`);
+      }
+
+      // Create new session
+      const newSession = this.sessionOrchestrator.getOrCreateSession(chatId);
+      this.logger.log(`[${chatId}] Created new session: ${newSession.sessionId}`);
+
+      await ctx.reply(BotMessages.NEW_SESSION);
+    } catch (error) {
+      this.logger.error(`[${chatId}] Error starting new session:`, error);
+      await ctx.reply(BotMessages.NEW_SESSION_FAILED);
+    }
+  }
+
+  /**
+   * /reset - Alias for /new
+   */
+  private async handleResetCommand(ctx: Context) {
+    return this.handleNewCommand(ctx);
+  }
+
+  /**
+   * Handle text messages - Default to conversation
+   * Simplified: Single method call to StreamManager
+   */
   private async handleTextMessage(ctx: Context) {
     const message = ctx.message as any;
     const text = message?.text || '';
@@ -171,88 +198,81 @@ export class TelegramBotService implements OnApplicationBootstrap {
 
     // Check if bot is currently responding - block input
     if (this.streamManager.isResponding(chatId)) {
-      await ctx.reply('⏳ Please wait for the current response to complete...');
+      await ctx.reply(BotMessages.WAIT_FOR_RESPONSE);
       return;
     }
-
-    // Handle all messages as conversation (free-form chat)
-    await this.handleConversation(ctx, text);
-  }
-
-  /**
-   * Handle follow-up questions in conversation mode
-   */
-  private async handleConversation(ctx: Context, message: string) {
-    const chatId = ctx.chat?.id.toString();
-    if (!chatId) return;
 
     try {
       await ctx.sendChatAction('typing');
 
-      // Get or create session
-      let session = this.sessionOrchestrator.getActiveSession(chatId) ||
-                    this.sessionOrchestrator.getCompletedSession(chatId);
-
-      if (!session) {
-        // Create new session for conversation (no specific ticker)
-        session = this.sessionOrchestrator.createSession(chatId, 'GENERAL');
-        this.logger.log(`Created new conversation session for chat ${chatId}`);
-      }
-
-      // Add user message to history
-      this.sessionOrchestrator.addUserMessage(chatId, message);
-
-      // Mark as responding
-      this.streamManager.startResponding(chatId);
-
-      // Stream response from Agent
-      await this.streamManager.startStream({
+      // Execute conversation (StreamManager handles session, history, and execution)
+      await this.streamManager.executeConversation(
         chatId,
+        text,
         ctx,
-        agentUrl: this.agentUrl,
-        workflowRequest: {
-          sessionId: session.sessionId,
-          workflowType: WorkflowType.CONVERSATION,
-          params: {
-            ticker: session.ticker,
-            userPrompt: message,
-            additionalContext: {
-              conversationHistory: this.sessionOrchestrator.getConversationHistory(chatId),
-            },
-          },
-        },
-      });
+        this.agentUrl
+      );
     } catch (error) {
-      this.logger.error('Failed to handle conversation:', error);
-      this.streamManager.stopResponding(chatId);
-      await ctx.reply('Failed to process your message. Please try again.');
+      this.logger.error(`[${chatId}] Error executing conversation:`, error);
+      await ctx.reply(BotMessages.CONVERSATION_FAILED);
     }
   }
 
   /**
-   * Show session status
+   * /status - Show session info
    */
   private async handleStatusCommand(ctx: Context) {
     const chatId = ctx.chat?.id.toString();
 
-    if (!chatId) return;
-
-    const sessionInfo = this.streamManager.getSessionStatus(chatId);
-
-    if (!sessionInfo) {
-      await ctx.reply('No active analysis session.');
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
       return;
     }
 
-    await ctx.reply(
-      `📊 Session Status\n\n` +
-      `Stock: ${sessionInfo.ticker}\n` +
-      `Status: ${sessionInfo.status}\n` +
-      `Started: ${sessionInfo.startedAt}\n\n` +
-      `💬 You can ask follow-up questions about this analysis.`
-    );
+    try {
+      const session = this.sessionOrchestrator.getSession(chatId);
+
+      if (!session) {
+        await ctx.reply(BotMessages.NO_ACTIVE_SESSION);
+        return;
+      }
+
+      // Build status message
+      const duration = Date.now() - session.createdAt.getTime();
+      const durationStr = this.formatDuration(duration);
+      const messageCount = session.conversationHistory.length;
+      const workflowCount = session.workflows.length;
+
+      let statusMsg = `📊 Session Status\n\n`;
+      statusMsg += `Session ID: ${session.sessionId}\n`;
+      statusMsg += `Status: ${session.status}\n`;
+      statusMsg += `Duration: ${durationStr}\n`;
+      statusMsg += `Messages: ${messageCount}\n`;
+      statusMsg += `Workflows: ${workflowCount}\n`;
+
+      if (workflowCount > 0) {
+        statusMsg += `\nRecent Workflows:\n`;
+        session.workflows.slice(-3).forEach(wf => {
+          statusMsg += `• ${wf.workflowType}`;
+          if (wf.ticker) statusMsg += ` (${wf.ticker})`;
+          statusMsg += wf.completedAt ? ' ✓' : ' (in progress)';
+          statusMsg += '\n';
+        });
+      }
+
+      statusMsg += `\nUse /new to start fresh or continue chatting!`;
+
+      await ctx.reply(statusMsg);
+
+    } catch (error) {
+      this.logger.error(`[${chatId}] Error getting status:`, error);
+      await ctx.reply(BotMessages.SESSION_STATUS_FAILED);
+    }
   }
 
+  /**
+   * /start - Welcome message
+   */
   private async handleStartCommand(ctx: Context) {
     await ctx.reply(
       '👋 Welcome to Stock Analyzer!\n\n' +
@@ -260,6 +280,7 @@ export class TelegramBotService implements OnApplicationBootstrap {
         '📊 Commands:\n' +
         '/analyze TICKER - Run deep analysis (30-60s)\n' +
         '/status - Check session status\n' +
+        '/new - Start fresh session\n' +
         '/stop - Cancel current response\n' +
         '/help - Show this help\n\n' +
         '💡 Examples:\n' +
@@ -267,33 +288,37 @@ export class TelegramBotService implements OnApplicationBootstrap {
         '• "What makes a stock undervalued?"\n' +
         '• /analyze AAPL (runs full analysis)\n' +
         '• "What\'s the DCF value?" (after analysis)\n\n' +
-        '⏱️ Sessions last 1 hour from last activity.'
+        '⏱️ Sessions persist until you use /new'
     );
   }
 
+  /**
+   * /help - Help message
+   */
   private async handleHelpCommand(ctx: Context) {
-    await ctx.reply(
-      '📖 How to use:\n\n' +
-        '💬 Free-Form Chat:\n' +
-        '• Just send any message to start chatting\n' +
-        '• Ask about investing, valuations, financial concepts\n' +
-        '• No commands needed for casual conversation\n\n' +
-        '📊 Deep Analysis:\n' +
-        '• /analyze AAPL - Run comprehensive 30-60s analysis\n' +
-        '• Includes: DCF, ratios, quality assessment, PDF report\n' +
-        '• Input blocked during analysis (like Claude)\n\n' +
-        '💭 How It Works:\n' +
-        '• Bot blocks input while responding (any response)\n' +
-        '• You\'ll see "⏳ Please wait..." if you try to send\n' +
-        '• Use /stop to cancel current response\n' +
-        '• Sessions remember context for 1 hour\n\n' +
-        '⚙️ Commands:\n' +
-        '• /status - Check session status\n' +
-        '• /stop - Cancel current response\n' +
-        '• /help - Show this message'
-    );
+    await ctx.reply(BotMessages.HELP_TEXT);
   }
 
+  /**
+   * Format duration to human-readable string
+   */
+  private formatDuration(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (hours > 0) {
+      return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    } else {
+      return `${seconds}s`;
+    }
+  }
+
+  /**
+   * Setup webhook for production
+   */
   private async setupWebhook() {
     const domain = this.configService.get<string>('telegram.webhookDomain');
     const path = this.configService.get<string>('telegram.webhookPath');

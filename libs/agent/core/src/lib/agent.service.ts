@@ -220,6 +220,222 @@ export class AgentService {
   }
 
   /**
+   * Execute Conversation - For freeform Q&A with context
+   *
+   * Bot calls this for follow-up questions after workflows or general conversation.
+   * Uses base system prompt (same as workflows) with conversation history for context.
+   *
+   * @param sessionId - Session ID from Bot
+   * @param userMessage - User's question or message
+   * @param conversationHistory - Previous messages for context
+   * @returns Assistant's response
+   */
+  async executeConversation(
+    sessionId: string,
+    userMessage: string,
+    conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>
+  ): Promise<string> {
+    this.logger.log(`[${sessionId}] Starting conversation mode`);
+
+    try {
+      // Use FULL_ANALYSIS workflow config for model settings, but with BASE_SYSTEM_PROMPT
+      const workflowConfig = this.workflowService.getConfig(
+        WorkflowType.FULL_ANALYSIS
+      );
+
+      // Import BASE_SYSTEM_PROMPT from workflow registry
+      const { BASE_SYSTEM_PROMPT } = await import('./workflows/workflow-registry');
+
+      // Execute query with conversation context
+      const response = await this.executeConversationQuery({
+        sessionId,
+        userMessage,
+        conversationHistory,
+        systemPrompt: BASE_SYSTEM_PROMPT,
+        model: workflowConfig.model,
+        maxTurns: 10, // Lower than workflows
+        maxThinkingTokens: 5000, // Lower than workflows
+      });
+
+      this.logger.log(`[${sessionId}] Conversation completed`);
+      return response;
+    } catch (error) {
+      this.logger.error(`[${sessionId}] Conversation failed:`, error);
+
+      // Emit error event
+      this.eventEmitter.emit(`stream.${sessionId}`, {
+        type: StreamEventType.ERROR,
+        sessionId,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Execute conversation query with context
+   * Separate from workflow execution to handle conversation history
+   */
+  private async executeConversationQuery(params: {
+    sessionId: string;
+    userMessage: string;
+    conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+    systemPrompt: string;
+    model: string;
+    maxTurns: number;
+    maxThinkingTokens: number;
+  }): Promise<string> {
+    const {
+      sessionId,
+      userMessage,
+      conversationHistory,
+      systemPrompt,
+      model,
+      maxTurns,
+      maxThinkingTokens,
+    } = params;
+
+    let fullContent = '';
+
+    // Build context-enriched prompt with conversation history
+    let enrichedPrompt = userMessage;
+    if (conversationHistory.length > 0) {
+      const recentHistory = conversationHistory.slice(-10); // Last 10 messages
+      const historyText = recentHistory
+        .map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .join('\n\n');
+      enrichedPrompt = `Previous conversation:\n\n${historyText}\n\n---\n\nUser's current question:\n${userMessage}`;
+    }
+
+    // Create SDK query
+    const stream = query({
+      prompt: enrichedPrompt,
+      options: {
+        systemPrompt,
+        model,
+        maxThinkingTokens,
+        maxTurns,
+        permissionMode: 'bypassPermissions',
+        mcpServers: {
+          'stock-analyzer': this.mcpServer,
+        },
+        includePartialMessages: false,
+
+        // Basic debug hooks
+        hooks: {
+          SessionStart: [
+            {
+              hooks: [
+                async () => {
+                  this.logger.debug(
+                    `[${sessionId}] Conversation session started`
+                  );
+                  return { continue: true };
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    // Process stream messages (same as workflow)
+    for await (const message of stream) {
+      this.logger.log(`[${sessionId}] ━━━ Message Type: ${message.type} ━━━`);
+
+      try {
+        switch (message.type) {
+          case 'system': {
+            if ('subtype' in message && message.subtype === 'init') {
+              this.handleSystemInitMessage(
+                message as SDKSystemMessage,
+                sessionId,
+                '',
+                true
+              );
+            } else if (
+              'subtype' in message &&
+              message.subtype === 'compact_boundary'
+            ) {
+              this.handleCompactBoundaryMessage(
+                message as SDKCompactBoundaryMessage,
+                sessionId,
+                '',
+                true
+              );
+            }
+            break;
+          }
+
+          case 'stream_event': {
+            this.handlePartialAssistantMessage(
+              message as SDKPartialAssistantMessage,
+              sessionId,
+              '',
+              true
+            );
+            break;
+          }
+
+          case 'assistant': {
+            const textContent = this.handleAssistantMessage(
+              message as SDKAssistantMessage,
+              sessionId,
+              '',
+              'conversation',
+              true
+            );
+            fullContent += textContent;
+            break;
+          }
+
+          case 'user': {
+            this.handleUserMessage(
+              message as SDKUserMessage,
+              sessionId,
+              '',
+              true
+            );
+            break;
+          }
+
+          case 'result': {
+            this.handleResultMessage(
+              message as SDKResultMessage,
+              sessionId,
+              '',
+              0,
+              true
+            );
+            break;
+          }
+
+          default: {
+            this.handleUnknownMessage(message as SDKMessage, sessionId);
+            break;
+          }
+        }
+      } catch (messageError) {
+        this.logger.error(
+          `[${sessionId}] Error processing message:`,
+          messageError
+        );
+      }
+    }
+
+    // Emit completion event
+    this.eventEmitter.emit(`stream.${sessionId}`, {
+      type: StreamEventType.COMPLETE,
+      sessionId,
+      timestamp: new Date().toISOString(),
+    });
+
+    return fullContent;
+  }
+
+  /**
    * Core Query Executor
    * Handles all 7 SDK message types with debug logging
    */

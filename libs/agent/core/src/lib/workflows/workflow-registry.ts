@@ -2,12 +2,12 @@ import { STOCK_VALUATION_FRAMEWORK } from '../prompts/framework-v2.3';
 import { WorkflowType, WorkflowConfig } from '@stock-analyzer/shared/types';
 
 /**
- * Base System Prompt - Prepended to ALL workflows
+ * Base System Prompt - Used for conversations and prepended to ALL workflows
  *
  * Provides foundational context about the agent's role, purpose, and capabilities.
- * This ensures consistent behavior across all workflow types.
+ * This ensures consistent behavior across all workflow types and conversation mode.
  */
-const BASE_SYSTEM_PROMPT = `# Your Role and Purpose
+export const BASE_SYSTEM_PROMPT = `# Your Role and Purpose
 
 You are a specialized AI financial analyst functioning as the Stock Analyzer Agent - an advanced financial analysis system designed to provide comprehensive, data-driven stock evaluations for investors and analysts.
 
@@ -46,30 +46,8 @@ export const WORKFLOW_CONFIGS: Record<WorkflowType, WorkflowConfig> = {
     enabledTools: ['fetch_company_data', 'calculate_dcf'],
   },
 
-  [WorkflowType.CONVERSATION]: {
-    type: WorkflowType.CONVERSATION,
-    systemPrompt: `You are continuing a conversation about a stock analysis you previously completed. The user is asking follow-up questions about the analysis.
-
-Context:
-- You have already completed a full analysis for this stock
-- The conversation history is provided in the user's prompt
-- Answer questions directly based on the previous analysis and available data
-- If new data is needed, you can use the fetch_company_data tool
-- Keep responses concise and focused on the user's specific question
-
-Available tools:
-- fetch_company_data: Get updated financial data if needed
-
-Guidelines:
-- Reference the previous analysis when relevant
-- Provide direct, concise answers
-- If the user asks about something not in the previous analysis, fetch new data if needed
-- Maintain the same professional, objective tone from the initial analysis`,
-    model: 'claude-sonnet-4-20250514',
-    maxTurns: 10,
-    maxThinkingTokens: 5000,
-    enabledTools: ['fetch_company_data'],
-  },
+  // Note: Conversation mode is not a workflow - it uses the base system prompt directly
+  // See AgentService.executeConversation() for conversation mode implementation
 
   [WorkflowType.SENTIMENT]: {
     type: WorkflowType.SENTIMENT,

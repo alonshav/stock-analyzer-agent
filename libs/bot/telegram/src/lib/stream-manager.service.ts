@@ -1,44 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
 import { SSEClientService } from '@stock-analyzer/bot/stream-client';
-import { SessionOrchestrator } from '@stock-analyzer/bot/sessions';
+import { SessionOrchestrator, MessageRole } from '@stock-analyzer/bot/sessions';
 import { WorkflowType, StreamEventType } from '@stock-analyzer/shared/types';
+import { BotMessages } from '@stock-analyzer/bot/common';
 import { TelegramFormatterService } from './formatters/telegram-formatter.service';
 import { ToolEventFormatterService } from './formatters/tool-event-formatter.service';
 
 /**
- * Stream Configuration
- */
-interface StreamConfig {
-  chatId: string;
-  ctx: Context;
-  agentUrl: string;
-  workflowRequest: {
-    sessionId: string;
-    workflowType: WorkflowType;
-    params: {
-      ticker: string;
-      userPrompt?: string;
-      additionalContext?: Record<string, unknown>;
-    };
-  };
-}
-
-/**
  * StreamManagerService - Orchestrates SSE Streams from Agent to Telegram
  *
- * SINGLE RESPONSIBILITY: Coordinate streaming analysis from Agent to Telegram Bot
- *
- * Delegates:
- * - SSE connection management → SSEClientService
- * - Message formatting → TelegramFormatterService
- * - Tool event formatting → ToolEventFormatterService
- * - Session management → SessionOrchestrator
- *
- * Handles:
- * - Event routing from Agent to Telegram
- * - Content buffering for session persistence
- * - Stream lifecycle (start, stop, cleanup)
+ * NEW ARCHITECTURE:
+ * - Provides high-level methods: executeWorkflow() and executeConversation()
+ * - Bot calls single method, service handles all orchestration
+ * - Manages session lifecycle, workflow tracking, and streaming
+ * - Hides implementation details from bot layer
  */
 @Injectable()
 export class StreamManagerService {
@@ -46,6 +22,7 @@ export class StreamManagerService {
   private readonly activeClients = new Map<string, SSEClientService>();
   private readonly streamBuffers = new Map<string, string>();
   private readonly activeResponses = new Set<string>();
+  private readonly workflowIds = new Map<string, string>(); // chatId -> workflowId
 
   constructor(
     private readonly sessionOrchestrator: SessionOrchestrator,
@@ -54,26 +31,113 @@ export class StreamManagerService {
   ) {}
 
   /**
-   * Start workflow stream - generic streaming method
+   * Execute Workflow - High-level method for bot
    *
-   * Caller provides complete workflow request configuration
+   * Bot calls this single method. Service handles:
+   * - Session management (get or create)
+   * - Workflow tracking
+   * - Responding state management
+   * - Stream execution
    */
-  async startStream(config: StreamConfig): Promise<void> {
-    const { chatId, ctx, agentUrl, workflowRequest } = config;
+  async executeWorkflow(
+    chatId: string,
+    workflowType: WorkflowType,
+    ticker: string,
+    ctx: Context,
+    agentUrl: string
+  ): Promise<void> {
+    // 1. Get or create session
+    const session = this.sessionOrchestrator.getOrCreateSession(chatId);
+    const sessionId = session.sessionId;
 
     this.logger.log(
-      `[${workflowRequest.params.ticker}] Starting stream for session ${workflowRequest.sessionId}`
+      `[${chatId}] Executing workflow ${workflowType} for ${ticker} (session: ${sessionId})`
     );
 
+    // 2. Track workflow execution
+    const workflowId = this.sessionOrchestrator.trackWorkflow(
+      chatId,
+      workflowType,
+      ticker
+    );
+    this.workflowIds.set(chatId, workflowId);
+
+    // 3. Mark as responding
+    this.startResponding(chatId);
+
+    // 4. Start workflow stream (internal method)
+    await this.startWorkflowStream(
+      workflowType,
+      sessionId,
+      ticker,
+      ctx,
+      chatId,
+      agentUrl
+    );
+  }
+
+  /**
+   * Execute Conversation - High-level method for bot
+   *
+   * Bot calls this single method. Service handles:
+   * - Session management (get or create)
+   * - Message history tracking
+   * - Responding state management
+   * - Stream execution
+   */
+  async executeConversation(
+    chatId: string,
+    userMessage: string,
+    ctx: Context,
+    agentUrl: string
+  ): Promise<void> {
+    // 1. Get or create session
+    const session = this.sessionOrchestrator.getOrCreateSession(chatId);
+    const sessionId = session.sessionId;
+    const conversationHistory = session.conversationHistory;
+
+    this.logger.log(
+      `[${chatId}] Executing conversation (session: ${sessionId}, history: ${conversationHistory.length} messages)`
+    );
+
+    // 2. Add user message to history
+    this.sessionOrchestrator.addMessage(chatId, MessageRole.USER, userMessage);
+
+    // 3. Mark as responding
+    this.startResponding(chatId);
+
+    // 4. Start conversation stream (internal method)
+    await this.startConversationStream(
+      sessionId,
+      chatId,
+      userMessage,
+      conversationHistory,
+      ctx,
+      agentUrl
+    );
+  }
+
+  /**
+   * INTERNAL: Start workflow stream
+   * Handles SSE connection to Agent's workflow endpoint
+   */
+  private async startWorkflowStream(
+    workflowType: WorkflowType,
+    sessionId: string,
+    ticker: string,
+    ctx: Context,
+    chatId: string,
+    agentUrl: string
+  ): Promise<void> {
     // Create SSE client
     const client = new SSEClientService(chatId);
     this.activeClients.set(chatId, client);
     this.streamBuffers.set(chatId, '');
 
     // Set up event handlers
-    this.setupEventHandlers(client, ctx, chatId);
+    this.setupWorkflowEventHandlers(client, ctx, chatId, ticker);
 
-    // Connect to Agent's workflow endpoint with caller-provided configuration
+    // Connect to Agent's workflow endpoint
     client.connect({
       url: `${agentUrl}/api/workflow`,
       method: 'POST',
@@ -81,53 +145,69 @@ export class StreamManagerService {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
       },
-      body: JSON.stringify(workflowRequest),
-    });
-  }
-
-  /**
-   * Start conversation stream for follow-up questions
-   *
-   * Convenience method that builds workflow request for conversations
-   */
-  async startConversation(chatId: string, message: string, ctx: Context, agentUrl: string): Promise<void> {
-    // Get completed session from orchestrator
-    const session = this.sessionOrchestrator.getCompletedSession(chatId);
-    if (!session) {
-      throw new Error('No completed session found for chat ' + chatId);
-    }
-
-    this.logger.log(`[${session.ticker}] Starting conversation for session ${session.sessionId}`);
-
-    // Add user message to conversation history
-    this.sessionOrchestrator.addUserMessage(chatId, message);
-
-    // Use the generic startStream method with conversation-specific configuration
-    await this.startStream({
-      chatId,
-      ctx,
-      agentUrl,
-      workflowRequest: {
-        sessionId: session.sessionId,
-        workflowType: WorkflowType.CONVERSATION,
+      body: JSON.stringify({
+        sessionId,
+        workflowType,
         params: {
-          ticker: session.ticker,
-          userPrompt: message,
-          additionalContext: {
-            conversationHistory: this.sessionOrchestrator.getConversationHistory(chatId),
-          },
+          ticker,
+          userPrompt: 'Perform comprehensive stock analysis',
         },
-      },
+      }),
     });
   }
 
   /**
-   * Setup event handlers for SSE client
+   * INTERNAL: Start conversation stream
+   * Handles SSE connection to Agent's conversation endpoint
    */
-  private setupEventHandlers(client: SSEClientService, ctx: Context, chatId: string): void {
+  private async startConversationStream(
+    sessionId: string,
+    chatId: string,
+    userMessage: string,
+    conversationHistory: Array<{ role: MessageRole; content: string; timestamp: Date }>,
+    ctx: Context,
+    agentUrl: string
+  ): Promise<void> {
+    // Create SSE client
+    const client = new SSEClientService(chatId);
+    this.activeClients.set(chatId, client);
+    this.streamBuffers.set(chatId, '');
+
+    // Set up event handlers
+    this.setupConversationEventHandlers(client, ctx, chatId);
+
+    // Connect to Agent's conversation endpoint
+    client.connect({
+      url: `${agentUrl}/api/conversation`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify({
+        sessionId,
+        userMessage,
+        conversationHistory: conversationHistory.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp.toISOString(),
+        })),
+      }),
+    });
+  }
+
+  /**
+   * Setup event handlers for workflow streams
+   */
+  private setupWorkflowEventHandlers(
+    client: SSEClientService,
+    ctx: Context,
+    chatId: string,
+    ticker: string
+  ): void {
     // Handle CONNECTED event
     client.on(StreamEventType.CONNECTED, (data) => {
-      this.logger.log(`Stream connected: ${data.sessionId}`);
+      this.logger.log(`Workflow stream connected: ${data.sessionId}`);
     });
 
     // Handle CHUNK event (streaming text)
@@ -184,13 +264,13 @@ export class StreamManagerService {
         const pdfBuffer = Buffer.from(data.pdfBase64, 'base64');
         const filename = `${data.ticker}_${data.reportType}_analysis.pdf`;
 
-        const chatId = ctx.chat?.id;
-        if (!chatId) {
+        const chatIdNum = ctx.chat?.id;
+        if (!chatIdNum) {
           throw new Error('Chat ID not available');
         }
 
         await ctx.telegram.sendDocument(
-          chatId,
+          chatIdNum,
           {
             source: pdfBuffer,
             filename: filename,
@@ -211,10 +291,14 @@ export class StreamManagerService {
     // Handle COMPLETE event
     client.on(StreamEventType.COMPLETE, async (data) => {
       const duration = Math.round(data.metadata.duration / 1000);
-
-      // Save analysis results to SessionOrchestrator
       const fullAnalysis = this.streamBuffers.get(chatId) || '';
-      this.sessionOrchestrator.completeSession(chatId, fullAnalysis, fullAnalysis);
+
+      // Mark workflow execution as completed
+      const workflowId = this.workflowIds.get(chatId);
+      if (workflowId) {
+        this.sessionOrchestrator.completeWorkflow(chatId, workflowId, fullAnalysis);
+        this.workflowIds.delete(chatId);
+      }
 
       await ctx.reply(
         `✅ Analysis complete!\n\n` +
@@ -223,15 +307,14 @@ export class StreamManagerService {
         `💬 You can now ask follow-up questions!`
       );
 
-      // Stop responding flag
+      // Session stays ACTIVE (don't complete session)
       this.stopResponding(chatId);
       this.cleanup(chatId);
     });
 
     // Handle ERROR event
     client.on(StreamEventType.ERROR, async (data) => {
-      await ctx.reply(`❌ Error: ${data.message}`);
-      // Stop responding flag
+      await ctx.reply(BotMessages.ANALYSIS_FAILED(ticker));
       this.stopResponding(chatId);
       this.cleanup(chatId);
     });
@@ -239,7 +322,6 @@ export class StreamManagerService {
     // Handle connection close
     client.on('close', () => {
       this.logger.log(`Connection closed for chat ${chatId}`);
-      // Stop responding flag
       this.stopResponding(chatId);
       this.cleanup(chatId);
     });
@@ -247,8 +329,114 @@ export class StreamManagerService {
     // Handle connection error
     client.on('error', async (error) => {
       this.logger.error('SSE error:', error);
-      await ctx.reply('❌ Connection lost. Please try again.');
-      // Stop responding flag
+      await ctx.reply(BotMessages.ANALYSIS_FAILED(ticker));
+      this.stopResponding(chatId);
+      this.cleanup(chatId);
+    });
+  }
+
+  /**
+   * Setup event handlers for conversation streams
+   */
+  private setupConversationEventHandlers(
+    client: SSEClientService,
+    ctx: Context,
+    chatId: string
+  ): void {
+    // Handle CONNECTED event
+    client.on(StreamEventType.CONNECTED, (data) => {
+      this.logger.log(`Conversation stream connected: ${data.sessionId}`);
+    });
+
+    // Handle CHUNK event (streaming text)
+    client.on(StreamEventType.CHUNK, async (data) => {
+      if (data.content) {
+        const currentBuffer = this.streamBuffers.get(chatId) || '';
+        this.streamBuffers.set(chatId, currentBuffer + data.content);
+        await this.telegramFormatter.sendLongMessage(ctx, data.content, true);
+      }
+    });
+
+    // Handle PARTIAL event
+    client.on(StreamEventType.PARTIAL, async (data) => {
+      if (data.partialContent) {
+        await this.telegramFormatter.sendLongMessage(ctx, data.partialContent, true);
+      }
+    });
+
+    // Handle THINKING event
+    client.on(StreamEventType.THINKING, async () => {
+      try {
+        await ctx.sendChatAction('typing');
+      } catch (error) {
+        this.logger.error('Failed to send typing action:', error);
+      }
+    });
+
+    // Handle TOOL event (tool call notification)
+    client.on(StreamEventType.TOOL, async (data) => {
+      const message = this.toolEventFormatter.formatToolCall(data);
+      try {
+        await ctx.reply(message);
+        await ctx.sendChatAction('typing');
+      } catch (error) {
+        this.logger.error('Failed to send tool message:', error);
+      }
+    });
+
+    // Handle TOOL_RESULT event
+    client.on(StreamEventType.TOOL_RESULT, async (data) => {
+      const message = this.toolEventFormatter.formatToolResult(data);
+      try {
+        await ctx.reply(message);
+      } catch (error) {
+        this.logger.error('Failed to send tool result message:', error);
+      }
+    });
+
+    // Handle COMPACTION event
+    client.on(StreamEventType.COMPACTION, async () => {
+      try {
+        await ctx.reply(BotMessages.CONTEXT_COMPACTED);
+      } catch (error) {
+        this.logger.error('Failed to send compaction message:', error);
+      }
+    });
+
+    // Handle COMPLETE event
+    client.on(StreamEventType.COMPLETE, async () => {
+      const finalResponse = this.streamBuffers.get(chatId) || '';
+
+      // Add assistant message to conversation history
+      this.sessionOrchestrator.addMessage(
+        chatId,
+        MessageRole.ASSISTANT,
+        finalResponse
+      );
+
+      // Session stays ACTIVE (don't complete session)
+      this.stopResponding(chatId);
+      this.cleanup(chatId);
+    });
+
+    // Handle ERROR event
+    client.on(StreamEventType.ERROR, async (data) => {
+      await ctx.reply(BotMessages.CONVERSATION_FAILED);
+      this.stopResponding(chatId);
+      this.cleanup(chatId);
+    });
+
+    // Handle connection close
+    client.on('close', () => {
+      this.logger.log(`Connection closed for chat ${chatId}`);
+      this.stopResponding(chatId);
+      this.cleanup(chatId);
+    });
+
+    // Handle connection error
+    client.on('error', async (error) => {
+      this.logger.error('SSE error:', error);
+      await ctx.reply(BotMessages.CONVERSATION_FAILED);
       this.stopResponding(chatId);
       this.cleanup(chatId);
     });
@@ -271,30 +459,6 @@ export class StreamManagerService {
    */
   hasActiveStream(chatId: string): boolean {
     return this.activeClients.has(chatId);
-  }
-
-  /**
-   * Check if chat has active session
-   */
-  hasActiveSession(chatId: string): boolean {
-    return this.sessionOrchestrator.hasActiveSession(chatId) ||
-           this.sessionOrchestrator.hasCompletedSession(chatId);
-  }
-
-  /**
-   * Get session status
-   */
-  getSessionStatus(chatId: string): { ticker: string; status: string; startedAt: string } | null {
-    const session = this.sessionOrchestrator.getActiveSession(chatId) ||
-                    this.sessionOrchestrator.getCompletedSession(chatId);
-
-    if (!session) return null;
-
-    return {
-      ticker: session.ticker,
-      status: session.status,
-      startedAt: session.createdAt.toISOString(),
-    };
   }
 
   /**
@@ -332,5 +496,6 @@ export class StreamManagerService {
     }
 
     this.streamBuffers.delete(chatId);
+    this.workflowIds.delete(chatId);
   }
 }

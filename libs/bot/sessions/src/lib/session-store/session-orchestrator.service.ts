@@ -4,87 +4,209 @@ import {
   ISessionRepository,
   SESSION_REPOSITORY,
 } from './interfaces/session-repository.interface';
-import { AnalysisSession, SessionStatus } from './interfaces/session.interface';
+import {
+  ChatSession,
+  SessionStatus,
+  MessageRole,
+  WorkflowExecution,
+} from './interfaces/session.interface';
 
 @Injectable()
 export class SessionOrchestrator {
   private readonly logger = new Logger(SessionOrchestrator.name);
-  private readonly SESSION_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
+  private readonly STOPPED_SESSION_CLEANUP_DAYS = 7; // Clean up STOPPED sessions after 7 days
 
   constructor(
     @Inject(SESSION_REPOSITORY)
     private readonly sessionRepository: ISessionRepository
   ) {}
 
-  // Session lifecycle
-  createSession(chatId: string, ticker: string): AnalysisSession {
-    this.logger.log(`Creating session for chat ${chatId}, ticker ${ticker}`);
-    return this.sessionRepository.createSession(chatId, ticker);
+  /**
+   * Get or create session for a chat.
+   * Always returns an ACTIVE session.
+   * If no session exists or previous was STOPPED, creates a new one.
+   */
+  getOrCreateSession(chatId: string): ChatSession {
+    // Check for existing ACTIVE session
+    const existing = this.sessionRepository.getSession(chatId);
+    if (existing && existing.status === SessionStatus.ACTIVE) {
+      this.logger.log(`Using existing session ${existing.sessionId} for chat ${chatId}`);
+      return existing;
+    }
+
+    // Create new session
+    this.logger.log(`Creating new session for chat ${chatId}`);
+    const sessionId = this.generateSessionId(chatId);
+    const newSession: ChatSession = {
+      sessionId,
+      chatId,
+      status: SessionStatus.ACTIVE,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      conversationHistory: [],
+      workflows: [],
+      metadata: {},
+    };
+
+    this.sessionRepository.saveSession(newSession);
+    return newSession;
   }
 
-  getActiveSession(chatId: string): AnalysisSession | null {
+  /**
+   * Get current session (returns null if STOPPED or doesn't exist)
+   */
+  getSession(chatId: string): ChatSession | null {
     const session = this.sessionRepository.getSession(chatId);
     return session?.status === SessionStatus.ACTIVE ? session : null;
   }
 
-  getCompletedSession(chatId: string): AnalysisSession | null {
+  /**
+   * Stop session (sets status to STOPPED)
+   */
+  stopSession(chatId: string, reason?: string): void {
     const session = this.sessionRepository.getSession(chatId);
-    return session?.status === SessionStatus.COMPLETED ? session : null;
+    if (!session) {
+      this.logger.warn(`No session found for chat ${chatId}`);
+      return;
+    }
+
+    this.logger.log(
+      `Stopping session ${session.sessionId} for chat ${chatId}` +
+        (reason ? `: ${reason}` : '')
+    );
+
+    session.status = SessionStatus.STOPPED;
+    session.updatedAt = new Date();
+    if (reason && session.metadata) {
+      session.metadata['stopReason'] = reason;
+    }
+
+    this.sessionRepository.saveSession(session);
   }
 
-  completeSession(
+  /**
+   * Track workflow execution within session
+   * Creates a workflow record, doesn't execute it
+   */
+  trackWorkflow(
     chatId: string,
-    fullAnalysis: string,
-    executiveSummary: string
+    workflowType: string,
+    ticker?: string
+  ): string {
+    const session = this.getSession(chatId);
+    if (!session) {
+      throw new Error(`No active session found for chat ${chatId}`);
+    }
+
+    const workflowId = `wf-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const execution: WorkflowExecution = {
+      workflowId,
+      workflowType,
+      ticker,
+      startedAt: new Date(),
+    };
+
+    session.workflows.push(execution);
+    session.updatedAt = new Date();
+    this.sessionRepository.saveSession(session);
+
+    this.logger.log(
+      `Tracked workflow ${workflowId} (${workflowType}) for session ${session.sessionId}`
+    );
+
+    return workflowId;
+  }
+
+  /**
+   * Mark workflow as completed
+   */
+  completeWorkflow(
+    chatId: string,
+    workflowId: string,
+    result: string
   ): void {
-    this.logger.log(`Completing session for chat ${chatId}`);
-    this.sessionRepository.saveAnalysisResults(
-      chatId,
-      fullAnalysis,
-      executiveSummary
+    const session = this.getSession(chatId);
+    if (!session) {
+      this.logger.warn(`No active session found for chat ${chatId}`);
+      return;
+    }
+
+    const workflow = session.workflows.find((w) => w.workflowId === workflowId);
+    if (!workflow) {
+      this.logger.warn(`Workflow ${workflowId} not found in session ${session.sessionId}`);
+      return;
+    }
+
+    workflow.completedAt = new Date();
+    workflow.result = result;
+    session.updatedAt = new Date();
+    this.sessionRepository.saveSession(session);
+
+    this.logger.log(
+      `Completed workflow ${workflowId} for session ${session.sessionId}`
     );
   }
 
-  stopSession(chatId: string): void {
-    this.logger.log(`Stopping session for chat ${chatId}`);
-    this.sessionRepository.updateSessionStatus(chatId, SessionStatus.STOPPED);
+  /**
+   * Add message to conversation history
+   */
+  addMessage(
+    chatId: string,
+    role: MessageRole,
+    content: string
+  ): void {
+    const session = this.getSession(chatId);
+    if (!session) {
+      this.logger.warn(`No active session found for chat ${chatId}`);
+      return;
+    }
+
+    session.conversationHistory.push({
+      role,
+      content,
+      timestamp: new Date(),
+    });
+    session.updatedAt = new Date();
+    this.sessionRepository.saveSession(session);
   }
 
-  // Conversation management
-  addUserMessage(chatId: string, content: string): void {
-    this.sessionRepository.addConversationMessage(chatId, 'user', content);
-  }
-
-  addAssistantMessage(chatId: string, content: string): void {
-    this.sessionRepository.addConversationMessage(chatId, 'assistant', content);
-  }
-
+  /**
+   * Get conversation history for session
+   */
   getConversationHistory(chatId: string) {
-    return this.sessionRepository.getConversationHistory(chatId);
+    const session = this.getSession(chatId);
+    return session?.conversationHistory || [];
   }
 
-  // Cleanup
-  @Cron(CronExpression.EVERY_5_MINUTES)
-  private cleanupExpiredSessions(): void {
-    const count = this.sessionRepository.cleanupExpiredSessions(
-      this.SESSION_EXPIRY_MS
-    );
+  /**
+   * Cleanup old STOPPED sessions (runs daily)
+   * ACTIVE sessions never expire automatically
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  private cleanupStoppedSessions(): void {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - this.STOPPED_SESSION_CLEANUP_DAYS);
+
+    const count = this.sessionRepository.cleanupOldStoppedSessions(cutoffDate);
     if (count > 0) {
-      this.logger.log(`Cleaned up ${count} expired sessions`);
+      this.logger.log(
+        `Cleaned up ${count} STOPPED sessions older than ${this.STOPPED_SESSION_CLEANUP_DAYS} days`
+      );
     }
   }
 
-  // Status queries
+  /**
+   * Get session status
+   */
   getSessionStatus(chatId: string): SessionStatus | null {
     const session = this.sessionRepository.getSession(chatId);
     return session?.status || null;
   }
 
-  hasActiveSession(chatId: string): boolean {
-    return this.getActiveSession(chatId) !== null;
-  }
-
-  hasCompletedSession(chatId: string): boolean {
-    return this.getCompletedSession(chatId) !== null;
+  /**
+   * Generate session ID (format: chat{chatId}-{timestamp})
+   */
+  private generateSessionId(chatId: string): string {
+    return `chat${chatId}-${Date.now()}`;
   }
 }

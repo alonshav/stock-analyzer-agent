@@ -98,10 +98,10 @@ export enum StreamEventType {
 
 export enum WorkflowType {
   FULL_ANALYSIS = 'full_analysis',
-  CONVERSATION = 'conversation',
   SENTIMENT = 'sentiment',
   DCF_VALUATION = 'dcf_valuation',
   PEER_COMPARISON = 'peer_comparison',
+  // Note: Conversation is not a workflow - it's the default mode
 }
 
 export interface WorkflowConfig {

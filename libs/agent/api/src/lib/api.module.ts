@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { AgentModule } from '@stock-analyzer/agent/core';
-import { AnalysisController } from './analysis.controller';
+import { AgentController } from './agent.controller';
 
 @Module({
   imports: [AgentModule],
-  controllers: [AnalysisController],
+  controllers: [AgentController],
   exports: [],
 })
 export class ApiModule {}
