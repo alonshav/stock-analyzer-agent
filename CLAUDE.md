@@ -47,7 +47,7 @@ Stock Analyzer is an Nx monorepo for AI-powered financial analysis with three ap
 7. **Extended thinking enabled** - uses `maxThinkingTokens: 10000` for deeper analysis
 8. **External PDF generation** - via Anvil API (no Puppeteer)
 9. **Tool response optimization** - Data fetch limited to stay under Claude's 25K token tool response limit
-10. **Session management** - 1-hour conversational memory enables follow-up questions
+10. **Agent is stateless** - Bot owns all session state, conversation history, and workflow tracking
 11. **Hooks system** - Middleware-style interception for validation, budget control, and data filtering
 12. **Two operating modes** - Workflow (new analysis) and Conversation (follow-ups with context)
 
@@ -69,7 +69,6 @@ libs/                        # All business logic
   ├── agent/
   │   ├── core/           # AgentService, StreamService
   │   ├── api/            # REST + SSE controllers
-  │   ├── session/        # SessionManagerService (1-hour memory)
   │   └── hooks/          # HooksService (validation, budget, filtering)
   ├── bot/
   │   ├── telegram/       # Telegram bot implementation
@@ -153,12 +152,14 @@ shared/types → shared/utils → shared/config
    mcp/integrations (FMPAdapter)
        ↓
    mcp/tools (ToolRegistry, DCFCalculator, CompanyDataFetcher)
-       ↓              ↓                    ↓
-   mcp/server    agent/session       agent/hooks
-       ↓              ↓                    ↓
-   mcp-server    agent/core (AgentService imports all three)
+       ↓              ↓
+   mcp/server    agent/hooks
+       ↓              ↓
+   mcp-server    agent/core (AgentService - stateless)
      (app)            ↓
                  agent/api (REST + SSE controllers)
+                      ↓
+                 bot/sessions (SessionOrchestrator - owns all sessions)
                       ↓
                  bot/telegram (StreamManagerService, TelegramBotService)
                       ↓
@@ -172,10 +173,10 @@ All libraries are accessible via `@stock-analyzer/` namespace:
 - `@stock-analyzer/mcp/tools` - Tool implementations (**imported directly by Agent**)
 - `@stock-analyzer/mcp/server` - MCP server class (NOT used by Agent)
 - `@stock-analyzer/mcp/integrations` - FMP API adapter
-- `@stock-analyzer/agent/core` - Agent service logic
+- `@stock-analyzer/agent/core` - Agent service logic (stateless)
 - `@stock-analyzer/agent/api` - REST/SSE controllers
-- `@stock-analyzer/agent/session` - Session management (NEW - 1-hour conversational memory)
-- `@stock-analyzer/agent/hooks` - Hooks system (NEW - validation, budget, filtering)
+- `@stock-analyzer/agent/hooks` - Hooks system (validation, budget, filtering)
+- `@stock-analyzer/bot/sessions` - Session management (SessionOrchestrator)
 - `@stock-analyzer/bot/telegram` - Telegram bot implementation
 - `@stock-analyzer/bot/common` - Shared bot utilities
 - `@stock-analyzer/shared/types` - Financial data types
@@ -255,93 +256,90 @@ export class AgentService {
 
 ## Session Management & Conversation Mode
 
-The system maintains 1-hour conversational sessions enabling follow-up questions with a proper state machine:
+**Critical Architecture Decision**: The **Bot owns all session state**. The Agent is stateless.
 
-**Session Lifecycle States** (`libs/agent/session/src/lib/interfaces/analysis-session.interface.ts`):
+**Session Ownership** (`libs/bot/sessions/src/lib/session-store/session-orchestrator.service.ts`):
+- Bot's `SessionOrchestrator` manages all chat sessions
+- Stores conversation history, workflow executions, and session state
+- Agent receives `sessionId` from bot but doesn't manage sessions itself
+- Agent processes requests and returns results - no state retention
+
+**Session Lifecycle States**:
 ```typescript
 export enum SessionStatus {
-  ACTIVE = 'active',       // Currently analyzing (before PDF delivered)
-  COMPLETED = 'completed', // Analysis done, available for conversation
-  STOPPED = 'stopped',     // User manually stopped via /stop
-  EXPIRED = 'expired',     // Timed out after 1 hour of inactivity
+  ACTIVE = 'active',   // Session is active and available
+  STOPPED = 'stopped', // User ended session via /new or /reset
 }
 
 // State transitions:
-ACTIVE → (analysis completes) → COMPLETED → (1hr timeout) → EXPIRED
-       ↘ (user /stop) → STOPPED
+ACTIVE → (user /new or /stop) → STOPPED
 ```
 
-**Session Manager Methods** (`libs/agent/session/src/lib/session-manager.service.ts`):
+**SessionOrchestrator Methods** (`libs/bot/sessions/`):
 ```typescript
-// Create new session (ACTIVE)
-const session = sessionManager.createSession(chatId, ticker);
+// Get or create session
+const session = sessionOrchestrator.getOrCreateSession(chatId);
 
-// Get session for conversation (checks both ACTIVE and COMPLETED)
-const session = sessionManager.getActiveSession(chatId) || sessionManager.getCompletedSession(chatId);
+// Track workflow execution
+const workflowId = sessionOrchestrator.trackWorkflow(chatId, WorkflowType.FULL_ANALYSIS, ticker);
 
-// Three separate query methods (Option 1 pattern):
-getActiveSession(chatId)      // Returns ACTIVE only
-getCompletedSession(chatId)   // Returns COMPLETED only
-getRecentSessions(chatId, 5)  // Returns ACTIVE + COMPLETED for context
+// Complete workflow and add to conversation history
+sessionOrchestrator.completeWorkflow(chatId, workflowId, analysisResult);
 
-// Add conversation messages (works with ACTIVE or COMPLETED)
-sessionManager.addMessage(chatId, MessageRole.USER, 'What is the P/E?');
-sessionManager.addMessage(chatId, MessageRole.ASSISTANT, 'P/E is 28.5...');
+// Add messages to conversation history
+sessionOrchestrator.addMessage(chatId, MessageRole.USER, 'What is the P/E?');
+sessionOrchestrator.addMessage(chatId, MessageRole.ASSISTANT, 'P/E is 28.5...');
 
-// Complete analysis (ACTIVE → COMPLETED)
-sessionManager.completeSession(chatId, fullAnalysis, executiveSummary);
+// Get full conversation history for follow-ups
+const history = sessionOrchestrator.getConversationHistory(chatId);
 
-// Manual stop (ACTIVE or COMPLETED → STOPPED)
-sessionManager.stopSession(chatId);
-
-// Automatic cleanup (COMPLETED → EXPIRED after 1hr, ACTIVE sessions never auto-expire)
-// Runs every 5 minutes
+// Stop session (user command)
+sessionOrchestrator.stopSession(chatId, 'User started new session');
 ```
 
-**Critical Design Decisions**:
-1. **ACTIVE sessions never auto-expire** - only COMPLETED sessions expire after timeout
-2. **No anti-pattern methods** - `getActiveSession()` returns ACTIVE only, never COMPLETED
-3. **Explicit method calls** - Use `getActiveSession() || getCompletedSession()` pattern
-4. **Clean separation** - Each method has a single, clear purpose
+**Key Design Decisions**:
+1. **Agent is stateless** - receives sessionId, processes request, returns result
+2. **Bot owns sessions** - manages conversation history and workflow tracking
+3. **Simple state machine** - ACTIVE ↔ STOPPED (no complex lifecycle)
+4. **Multiple workflows per session** - users can analyze multiple stocks in one chat session
+5. **7-day cleanup** - STOPPED sessions removed after 7 days of inactivity
 
 **Two Operating Modes**:
 
-1. **Workflow Mode** - `analyzeStock(chatId, ticker, prompt)`:
-   - Creates new session (ACTIVE)
-   - Runs full analysis (30-60s)
-   - Streams executive summary + PDF
-   - Calls `completeSession()` → status becomes COMPLETED
-   - Session available for follow-ups
+1. **Workflow Mode** - Bot calls `/api/workflow`:
+   - Bot creates/retrieves session
+   - Bot tracks workflow in session
+   - Agent executes analysis (stateless)
+   - Bot receives SSE stream
+   - Bot completes workflow in session with result
 
-2. **Conversation Mode** - `handleConversation(chatId, message)`:
-   - Checks `getActiveSession() || getCompletedSession()`
-   - Builds context from past analysis + conversation
-   - Calls Claude with full context (5-15s)
-   - Streams targeted answer
-   - Adds Q&A to conversation history
+2. **Conversation Mode** - Bot calls `/api/conversation`:
+   - Bot retrieves session and conversation history
+   - Bot sends history to Agent
+   - Agent processes question with context (stateless)
+   - Bot receives SSE stream
+   - Bot adds Q&A to conversation history
 
 **Real-World Flow**:
 ```
 User: /analyze AAPL
-  → Session: AAPL (ACTIVE)
-  → Analysis runs, PDF delivered
-  → Session: AAPL (COMPLETED) ✓
+  → Bot: getOrCreateSession(chatId)
+  → Bot: trackWorkflow(chatId, FULL_ANALYSIS, 'AAPL')
+  → Agent: executeWorkflow(sessionId, ...) [stateless]
+  → Bot: completeWorkflow(chatId, workflowId, result)
 
 User: "What's the P/E?"
-  → getActiveSession() returns null
-  → getCompletedSession() returns AAPL ✓
-  → Conversation works!
+  → Bot: getConversationHistory(chatId)
+  → Agent: executeConversation(sessionId, message, history) [stateless]
+  → Bot: addMessage(chatId, USER, question)
+  → Bot: addMessage(chatId, ASSISTANT, answer)
 
-User: /analyze MSFT
-  → getActiveSession() returns null (no conflict!)
-  → Session: AAPL (COMPLETED), MSFT (ACTIVE) ✓
-
-[1 hour passes with no activity]
-  → Cleanup expires AAPL (COMPLETED → EXPIRED)
-  → MSFT stays ACTIVE (no auto-expiration) ✓
+User: /new
+  → Bot: stopSession(chatId, 'User started fresh')
+  → Bot: getOrCreateSession(chatId) [creates new one]
 ```
 
-**Backward Compatibility**: Legacy `analyzeStock(ticker, prompt)` signature still works via overload detection.
+**Message Tracking**: All bot messages are tracked via `BotMessagingService`, which calls `SessionOrchestrator.addMessage()` automatically.
 
 ## Hooks System (Middleware Pattern)
 
