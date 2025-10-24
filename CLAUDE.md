@@ -548,7 +548,7 @@ export const MCPToolName = {
 ### Agent (Port 3001)
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-haiku-4-5-20250514
+ANTHROPIC_MODEL=claude-haiku-4-5
 FMP_API_KEY=...              # Financial Modeling Prep
 ALPHA_VANTAGE_KEY=...        # Market data
 ANVIL_API_KEY=...            # PDF generation

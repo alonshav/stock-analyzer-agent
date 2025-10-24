@@ -120,11 +120,64 @@ export interface WorkflowParams {
 }
 
 // ============================================================================
+// Anthropic Model IDs
+// ============================================================================
+
+/**
+ * Anthropic Claude model identifiers
+ * Official model IDs from Anthropic API documentation (as of 2025)
+ *
+ * Note: Use specific dated versions (e.g., claude-sonnet-4-5-20250929) for
+ * production to ensure consistent behavior. Aliases without dates point to
+ * the most recent snapshot.
+ */
+export enum AnthropicModel {
+  // Current Models (2025)
+
+  /** Claude Sonnet 4.5 - Most intelligent model, best for coding and complex agents */
+  SONNET_4_5 = 'claude-sonnet-4-5-20250929',
+
+  /** Claude Haiku 4.5 - Fast, cost-effective for high-volume tasks */
+  HAIKU_4_5 = 'claude-haiku-4-5-20251001',
+
+  /** Claude Opus 4.1 - Most capable model for highly complex tasks */
+  OPUS_4_1 = 'claude-opus-4-1-20250805',
+
+  // Legacy Models (Still Available)
+
+  /** Claude Sonnet 4 - Previous generation, May 2025 snapshot */
+  SONNET_4 = 'claude-sonnet-4-20250514',
+
+  /** Claude Opus 4 - Previous generation, May 2025 snapshot */
+  OPUS_4 = 'claude-opus-4-20250514',
+
+  /** Claude 3.7 Sonnet - February 2025 snapshot */
+  SONNET_3_7 = 'claude-3-7-sonnet-20250219',
+
+  /** Claude 3.5 Haiku - October 2024 snapshot */
+  HAIKU_3_5 = 'claude-3-5-haiku-20241022',
+
+  // Model Aliases (auto-update to latest snapshot - avoid in production)
+
+  /** Alias for latest Sonnet 4.5 (currently points to 20250929) */
+  SONNET_4_5_ALIAS = 'claude-sonnet-4-5',
+
+  /** Alias for latest Haiku 4.5 (currently points to 20251001) */
+  HAIKU_4_5_ALIAS = 'claude-haiku-4-5',
+
+  /** Alias for latest Opus 4.1 (currently points to 20250805) */
+  OPUS_4_1_ALIAS = 'claude-opus-4-1',
+
+  /** Alias for latest Sonnet 4 (currently points to 20250514) */
+  SONNET_4_ALIAS = 'claude-sonnet-4',
+}
+
+// ============================================================================
 // Framework and Model Constants
 // ============================================================================
 
 export const FRAMEWORK_VERSION = 'v2.3';
-export const DEFAULT_MODEL = 'claude-haiku-4-5-20250514';
+export const DEFAULT_MODEL = AnthropicModel.HAIKU_4_5;
 export const DEFAULT_MAX_TURNS = 20;
 export const DEFAULT_MAX_THINKING_TOKENS = 10000;
 

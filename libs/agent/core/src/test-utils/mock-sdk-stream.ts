@@ -3,6 +3,8 @@
  * Provides helpers to create all 7 SDK message types
  */
 
+import { AnthropicModel } from '@stock-analyzer/shared/types';
+
 export interface MockAssistantMessage {
   type: 'assistant';
   message: {
@@ -110,7 +112,7 @@ export class MockSDKStream {
       message: {
         id: `msg_${Date.now()}`,
         role: 'assistant',
-        model: 'claude-sonnet-4-20250514',
+        model: AnthropicModel.SONNET_4,
         content: [{ type: 'text', text }],
         stop_reason: options?.stopReason || 'end_turn',
         usage: options?.usage || { input_tokens: 1000, output_tokens: 500 },
@@ -127,7 +129,7 @@ export class MockSDKStream {
       message: {
         id: `msg_${Date.now()}`,
         role: 'assistant',
-        model: 'claude-sonnet-4-20250514',
+        model: AnthropicModel.SONNET_4,
         content: [{ type: 'thinking', thinking }],
         stop_reason: 'end_turn',
         usage: { input_tokens: 1000, output_tokens: 500 },
@@ -148,7 +150,7 @@ export class MockSDKStream {
       message: {
         id: `msg_${Date.now()}`,
         role: 'assistant',
-        model: 'claude-sonnet-4-20250514',
+        model: AnthropicModel.SONNET_4,
         content: [
           {
             type: 'tool_use',
@@ -241,7 +243,7 @@ export class MockSDKStream {
     return {
       type: 'system',
       apiKeySource: options?.apiKeySource || 'env',
-      model: options?.model || 'claude-sonnet-4-20250514',
+      model: options?.model || AnthropicModel.SONNET_4,
       permissionMode: options?.permissionMode || 'bypassPermissions',
       tools: options?.tools || [
         { name: 'fetch_company_data', description: 'Fetch company data' },

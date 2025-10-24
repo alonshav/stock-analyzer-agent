@@ -4,6 +4,7 @@
 
 import { MockSDKStream } from '../libs/agent/core/src/test-utils/mock-sdk-stream';
 import { MockSessionManager } from '../libs/agent/core/src/test-utils/mock-session';
+import { AnthropicModel } from '@stock-analyzer/shared/types';
 
 /**
  * Sample FMP API company data response
@@ -78,7 +79,7 @@ export const SAMPLE_COMPANY_DATA = {
  */
 export const SAMPLE_ANALYSIS_STREAM = [
   MockSDKStream.createSystemMessage({
-    model: 'claude-sonnet-4-20250514',
+    model: AnthropicModel.SONNET_4,
     permissionMode: 'bypassPermissions',
     tools: [
       { name: 'fetch_company_data', description: 'Fetch company financial data' },

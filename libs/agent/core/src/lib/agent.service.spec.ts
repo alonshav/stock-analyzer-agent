@@ -8,7 +8,11 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentService, AnalysisResult } from './agent.service';
 import { WorkflowService } from './workflows';
-import { StreamEventType, WorkflowType } from '@stock-analyzer/shared/types';
+import {
+  StreamEventType,
+  WorkflowType,
+  AnthropicModel,
+} from '@stock-analyzer/shared/types';
 
 // Mock the Anthropic SDK
 const mockQuery = jest.fn();
@@ -106,7 +110,7 @@ describe('AgentService', () => {
             }),
             getConfig: jest.fn((workflowType) => ({
               systemPrompt: 'You are a stock analyst',
-              model: 'claude-sonnet-4-20250514',
+              model: AnthropicModel.SONNET_4,
               maxThinkingTokens: 10000,
               maxTurns: 20,
             })),
@@ -192,7 +196,7 @@ describe('AgentService', () => {
         executiveSummary: 'Apple Inc. shows strong fundamentals...',
         metadata: {
           workflowType: WorkflowType.FULL_ANALYSIS,
-          model: 'claude-sonnet-4-20250514',
+          model: AnthropicModel.SONNET_4,
         },
       });
     });
@@ -253,7 +257,7 @@ describe('AgentService', () => {
           ticker,
           metadata: expect.objectContaining({
             workflowType: WorkflowType.FULL_ANALYSIS,
-            model: 'claude-sonnet-4-20250514',
+            model: AnthropicModel.SONNET_4,
             duration: expect.any(Number),
           }),
         })
@@ -296,7 +300,7 @@ describe('AgentService', () => {
           yield {
             type: 'system',
             subtype: 'init',
-            model: 'claude-sonnet-4-20250514',
+            model: AnthropicModel.SONNET_4,
             permissionMode: 'bypassPermissions',
           };
           yield {
@@ -320,7 +324,7 @@ describe('AgentService', () => {
           type: StreamEventType.SYSTEM,
           sessionId,
           ticker,
-          model: 'claude-sonnet-4-20250514',
+          model: AnthropicModel.SONNET_4,
           permissionMode: 'bypassPermissions',
         })
       );
@@ -736,7 +740,7 @@ describe('AgentService', () => {
           yield {
             type: 'system',
             subtype: 'init',
-            model: 'claude-sonnet-4',
+            model: AnthropicModel.SONNET_4_ALIAS,
             permissionMode: 'bypassPermissions',
           };
           // 2. PARTIAL

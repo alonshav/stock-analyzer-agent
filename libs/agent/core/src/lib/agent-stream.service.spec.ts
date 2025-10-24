@@ -6,7 +6,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentStreamService } from './agent-stream.service';
-import { StreamEventType } from '@stock-analyzer/shared/types';
+import {
+  StreamEventType,
+  AnthropicModel,
+} from '@stock-analyzer/shared/types';
 import { Response } from 'express';
 
 describe('AgentStreamService', () => {
@@ -223,7 +226,7 @@ describe('AgentStreamService', () => {
         metadata: {
           analysisDate: new Date().toISOString(),
           workflowType: 'analysis',
-          model: 'claude-sonnet-4',
+          model: AnthropicModel.SONNET_4_ALIAS,
           duration: 5000,
         },
       };
