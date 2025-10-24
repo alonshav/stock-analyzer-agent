@@ -548,7 +548,7 @@ export const MCPToolName = {
 ### Agent (Port 3001)
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_MODEL=claude-haiku-4-5-20250514
 FMP_API_KEY=...              # Financial Modeling Prep
 ALPHA_VANTAGE_KEY=...        # Market data
 ANVIL_API_KEY=...            # PDF generation
@@ -702,6 +702,61 @@ npm run start:agent
 - Tool event emission for real-time visibility into data fetching
 - `fullAnalysis` field is optional (empty by default)
 
+## Low-Level Messaging Architecture
+
+**CRITICAL: All bot messages MUST go through BotMessagingService.**
+
+### BotMessagingService Pattern
+
+`libs/bot/telegram/src/lib/bot-messaging.service.ts` is a LOW-LEVEL service ensuring complete conversation history tracking:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ALL BOT MESSAGES                          │
+│                           ↓                                  │
+│                  BotMessagingService                         │
+│                    (LOW LEVEL)                               │
+│                           ↓                                  │
+│              ┌────────────┴────────────┐                     │
+│              ↓                         ↓                     │
+│      Send to Telegram          Track in History             │
+│      (ctx.reply())            (SessionOrchestrator)          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Core Methods:**
+```typescript
+// Send message and track in history (most common)
+await botMessaging.sendAndTrack(ctx, chatId, 'Analysis complete!');
+
+// Track user message (when bot receives input)
+botMessaging.trackUserMessage(chatId, userMessage);
+
+// Send document and track caption
+await botMessaging.sendDocumentAndTrack(ctx, chatId, buffer, filename, caption);
+
+// Track assistant message without sending (for streaming results already sent)
+botMessaging.trackAssistantMessage(chatId, finalResponse);
+
+// Send typing action (no history tracking)
+await botMessaging.sendTypingAction(ctx);
+```
+
+**Critical Rules:**
+1. NEVER call `ctx.reply()` directly - always use `botMessaging.sendAndTrack()`
+2. NEVER call `sessionOrchestrator.addMessage()` directly - use BotMessagingService methods
+3. Every message sent to Telegram MUST be tracked in conversation history
+4. This ensures complete context for follow-up questions
+
+**Why This Matters:**
+- Workflow analysis results are tracked automatically
+- Tool call notifications are tracked
+- Error messages are tracked
+- Status messages are tracked
+- Follow-up questions have complete context
+
+See `docs/ARCHITECTURE_LOW_LEVEL_MESSAGING.md` for complete details.
+
 ## Telegram Bot Integration
 
 **Smart Routing** (`libs/bot/telegram/src/lib/telegram-bot.service.ts`):
@@ -719,6 +774,8 @@ The bot intelligently routes user input based on context:
 "AAPL" (session active)   → Conflict detection: "Start new or continue?"
 "What's the P/E ratio?"   → Route to conversation mode (if session active)
 "What's the P/E ratio?"   → Error: "No active session" (if no session)
+
+// All command handlers use BotMessagingService for message sending
 ```
 
 **Event Streaming** (`libs/bot/telegram/src/lib/stream-manager.service.ts`):

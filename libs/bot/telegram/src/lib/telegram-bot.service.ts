@@ -5,6 +5,7 @@ import { StreamManagerService } from './stream-manager.service';
 import { SessionOrchestrator } from '@stock-analyzer/bot/sessions';
 import { WorkflowType } from '@stock-analyzer/shared/types';
 import { BotMessages } from '@stock-analyzer/bot/common';
+import { BotMessagingService } from './bot-messaging.service';
 
 @Injectable()
 export class TelegramBotService implements OnApplicationBootstrap {
@@ -16,7 +17,8 @@ export class TelegramBotService implements OnApplicationBootstrap {
   constructor(
     private configService: ConfigService,
     private streamManager: StreamManagerService,
-    private sessionOrchestrator: SessionOrchestrator
+    private sessionOrchestrator: SessionOrchestrator,
+    private botMessaging: BotMessagingService
   ) {
     const token = this.configService.get<string>('telegram.botToken');
     if (!token) {
@@ -98,13 +100,13 @@ export class TelegramBotService implements OnApplicationBootstrap {
 
     // Check if bot is currently responding
     if (this.streamManager.isResponding(chatId)) {
-      await ctx.reply(BotMessages.WAIT_FOR_RESPONSE);
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.WAIT_FOR_RESPONSE);
       return;
     }
 
     try {
       await ctx.sendChatAction('typing');
-      await ctx.reply(BotMessages.STARTING_ANALYSIS(ticker));
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.STARTING_ANALYSIS(ticker));
 
       // Execute workflow (StreamManager handles session, tracking, and execution)
       await this.streamManager.executeWorkflow(
@@ -116,7 +118,7 @@ export class TelegramBotService implements OnApplicationBootstrap {
       );
     } catch (error) {
       this.logger.error(`[${chatId}] Error executing workflow:`, error);
-      await ctx.reply(BotMessages.ANALYSIS_FAILED(ticker));
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.ANALYSIS_FAILED(ticker));
     }
   }
 
@@ -143,9 +145,9 @@ export class TelegramBotService implements OnApplicationBootstrap {
       this.sessionOrchestrator.stopSession(chatId, 'User stopped response');
 
       this.logger.log(`Stopped response for chat ${chatId}`);
-      await ctx.reply('❌ Stopped.');
+      await this.botMessaging.sendAndTrack(ctx, chatId, '❌ Stopped.');
     } else {
-      await ctx.reply('Nothing to stop - bot is not currently responding.');
+      await this.botMessaging.sendAndTrack(ctx, chatId, 'Nothing to stop - bot is not currently responding.');
     }
   }
 
@@ -171,10 +173,10 @@ export class TelegramBotService implements OnApplicationBootstrap {
       const newSession = this.sessionOrchestrator.getOrCreateSession(chatId);
       this.logger.log(`[${chatId}] Created new session: ${newSession.sessionId}`);
 
-      await ctx.reply(BotMessages.NEW_SESSION);
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.NEW_SESSION);
     } catch (error) {
       this.logger.error(`[${chatId}] Error starting new session:`, error);
-      await ctx.reply(BotMessages.NEW_SESSION_FAILED);
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.NEW_SESSION_FAILED);
     }
   }
 
@@ -198,7 +200,7 @@ export class TelegramBotService implements OnApplicationBootstrap {
 
     // Check if bot is currently responding - block input
     if (this.streamManager.isResponding(chatId)) {
-      await ctx.reply(BotMessages.WAIT_FOR_RESPONSE);
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.WAIT_FOR_RESPONSE);
       return;
     }
 
@@ -214,7 +216,7 @@ export class TelegramBotService implements OnApplicationBootstrap {
       );
     } catch (error) {
       this.logger.error(`[${chatId}] Error executing conversation:`, error);
-      await ctx.reply(BotMessages.CONVERSATION_FAILED);
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.CONVERSATION_FAILED);
     }
   }
 
@@ -233,7 +235,7 @@ export class TelegramBotService implements OnApplicationBootstrap {
       const session = this.sessionOrchestrator.getSession(chatId);
 
       if (!session) {
-        await ctx.reply(BotMessages.NO_ACTIVE_SESSION);
+        await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.NO_ACTIVE_SESSION);
         return;
       }
 
@@ -262,11 +264,11 @@ export class TelegramBotService implements OnApplicationBootstrap {
 
       statusMsg += `\nUse /new to start fresh or continue chatting!`;
 
-      await ctx.reply(statusMsg);
+      await this.botMessaging.sendAndTrack(ctx, chatId, statusMsg);
 
     } catch (error) {
       this.logger.error(`[${chatId}] Error getting status:`, error);
-      await ctx.reply(BotMessages.SESSION_STATUS_FAILED);
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.SESSION_STATUS_FAILED);
     }
   }
 
@@ -274,7 +276,15 @@ export class TelegramBotService implements OnApplicationBootstrap {
    * /start - Welcome message
    */
   private async handleStartCommand(ctx: Context) {
-    await ctx.reply(
+    const chatId = ctx.chat?.id.toString();
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+      return;
+    }
+
+    await this.botMessaging.sendAndTrack(
+      ctx,
+      chatId,
       '👋 Welcome to Stock Analyzer!\n\n' +
         '💬 Just start chatting! Ask me anything about investing, stocks, or finance.\n\n' +
         '📊 Commands:\n' +
@@ -296,7 +306,13 @@ export class TelegramBotService implements OnApplicationBootstrap {
    * /help - Help message
    */
   private async handleHelpCommand(ctx: Context) {
-    await ctx.reply(BotMessages.HELP_TEXT);
+    const chatId = ctx.chat?.id.toString();
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+      return;
+    }
+
+    await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.HELP_TEXT);
   }
 
   /**

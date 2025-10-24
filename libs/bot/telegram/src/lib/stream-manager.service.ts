@@ -6,6 +6,7 @@ import { WorkflowType, StreamEventType } from '@stock-analyzer/shared/types';
 import { BotMessages } from '@stock-analyzer/bot/common';
 import { TelegramFormatterService } from './formatters/telegram-formatter.service';
 import { ToolEventFormatterService } from './formatters/tool-event-formatter.service';
+import { BotMessagingService } from './bot-messaging.service';
 
 /**
  * StreamManagerService - Orchestrates SSE Streams from Agent to Telegram
@@ -27,7 +28,8 @@ export class StreamManagerService {
   constructor(
     private readonly sessionOrchestrator: SessionOrchestrator,
     private readonly telegramFormatter: TelegramFormatterService,
-    private readonly toolEventFormatter: ToolEventFormatterService
+    private readonly toolEventFormatter: ToolEventFormatterService,
+    private readonly botMessaging: BotMessagingService
   ) {}
 
   /**
@@ -54,7 +56,10 @@ export class StreamManagerService {
       `[${chatId}] Executing workflow ${workflowType} for ${ticker} (session: ${sessionId})`
     );
 
-    // 2. Track workflow execution
+    // 2. Track initial workflow request in conversation history
+    this.botMessaging.trackUserMessage(chatId, `Analyze ${ticker} stock`);
+
+    // 3. Track workflow execution
     const workflowId = this.sessionOrchestrator.trackWorkflow(
       chatId,
       workflowType,
@@ -62,10 +67,10 @@ export class StreamManagerService {
     );
     this.workflowIds.set(chatId, workflowId);
 
-    // 3. Mark as responding
+    // 4. Mark as responding
     this.startResponding(chatId);
 
-    // 4. Start workflow stream (internal method)
+    // 5. Start workflow stream (internal method)
     await this.startWorkflowStream(
       workflowType,
       sessionId,
@@ -101,7 +106,7 @@ export class StreamManagerService {
     );
 
     // 2. Add user message to history
-    this.sessionOrchestrator.addMessage(chatId, MessageRole.USER, userMessage);
+    this.botMessaging.trackUserMessage(chatId, userMessage);
 
     // 3. Mark as responding
     this.startResponding(chatId);
@@ -229,8 +234,9 @@ export class StreamManagerService {
     // Handle THINKING event
     client.on(StreamEventType.THINKING, async () => {
       try {
-        await ctx.reply('💭 Thinking...');
-        await ctx.sendChatAction('typing');
+        const message = '💭 Thinking...';
+        await this.botMessaging.sendAndTrack(ctx, chatId, message);
+        await this.botMessaging.sendTypingAction(ctx);
       } catch (error) {
         this.logger.error('Failed to send thinking message:', error);
       }
@@ -240,8 +246,8 @@ export class StreamManagerService {
     client.on(StreamEventType.TOOL, async (data) => {
       const message = this.toolEventFormatter.formatToolCall(data);
       try {
-        await ctx.reply(message);
-        await ctx.sendChatAction('typing');
+        await this.botMessaging.sendAndTrack(ctx, chatId, message);
+        await this.botMessaging.sendTypingAction(ctx);
       } catch (error) {
         this.logger.error('Failed to send tool message:', error);
       }
@@ -251,7 +257,7 @@ export class StreamManagerService {
     client.on(StreamEventType.TOOL_RESULT, async (data) => {
       const message = this.toolEventFormatter.formatToolResult(data);
       try {
-        await ctx.reply(message);
+        await this.botMessaging.sendAndTrack(ctx, chatId, message);
       } catch (error) {
         this.logger.error('Failed to send tool result message:', error);
       }
@@ -264,27 +270,24 @@ export class StreamManagerService {
         const pdfBuffer = Buffer.from(data.pdfBase64, 'base64');
         const filename = `${data.ticker}_${data.reportType}_analysis.pdf`;
 
-        const chatIdNum = ctx.chat?.id;
-        if (!chatIdNum) {
-          throw new Error('Chat ID not available');
-        }
+        const caption = `📄 ${data.ticker} ${data.reportType === 'full' ? 'Full Analysis' : 'Executive Summary'} Report\nFile size: ${Math.round(data.fileSize / 1024)}KB`;
 
-        await ctx.telegram.sendDocument(
-          chatIdNum,
-          {
-            source: pdfBuffer,
-            filename: filename,
-          },
-          {
-            caption: `📄 ${data.ticker} ${data.reportType === 'full' ? 'Full Analysis' : 'Executive Summary'} Report\n` +
-                     `File size: ${Math.round(data.fileSize / 1024)}KB`,
-          }
+        await this.botMessaging.sendDocumentAndTrack(
+          ctx,
+          chatId,
+          pdfBuffer,
+          filename,
+          caption
         );
 
         this.logger.log(`PDF sent successfully`);
       } catch (error) {
         this.logger.error(`Failed to send PDF:`, error);
-        await ctx.reply(`⚠️ PDF generated but failed to send. Size: ${Math.round(data.fileSize / 1024)}KB`);
+        await this.botMessaging.sendAndTrack(
+          ctx,
+          chatId,
+          `⚠️ PDF generated but failed to send. Size: ${Math.round(data.fileSize / 1024)}KB`
+        );
       }
     });
 
@@ -293,14 +296,17 @@ export class StreamManagerService {
       const duration = Math.round(data.metadata.duration / 1000);
       const fullAnalysis = this.streamBuffers.get(chatId) || '';
 
-      // Mark workflow execution as completed
+      // Mark workflow as completed
+      // Note: completeWorkflow() also adds analysis to conversation history
       const workflowId = this.workflowIds.get(chatId);
       if (workflowId) {
         this.sessionOrchestrator.completeWorkflow(chatId, workflowId, fullAnalysis);
         this.workflowIds.delete(chatId);
       }
 
-      await ctx.reply(
+      await this.botMessaging.sendAndTrack(
+        ctx,
+        chatId,
         `✅ Analysis complete!\n\n` +
         `⏱️ Duration: ${duration}s\n` +
         `🤖 Model: ${data.metadata.model}\n\n` +
@@ -314,7 +320,7 @@ export class StreamManagerService {
 
     // Handle ERROR event
     client.on(StreamEventType.ERROR, async (data) => {
-      await ctx.reply(BotMessages.ANALYSIS_FAILED(ticker));
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.ANALYSIS_FAILED(ticker));
       this.stopResponding(chatId);
       this.cleanup(chatId);
     });
@@ -329,7 +335,7 @@ export class StreamManagerService {
     // Handle connection error
     client.on('error', async (error) => {
       this.logger.error('SSE error:', error);
-      await ctx.reply(BotMessages.ANALYSIS_FAILED(ticker));
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.ANALYSIS_FAILED(ticker));
       this.stopResponding(chatId);
       this.cleanup(chatId);
     });
@@ -377,8 +383,8 @@ export class StreamManagerService {
     client.on(StreamEventType.TOOL, async (data) => {
       const message = this.toolEventFormatter.formatToolCall(data);
       try {
-        await ctx.reply(message);
-        await ctx.sendChatAction('typing');
+        await this.botMessaging.sendAndTrack(ctx, chatId, message);
+        await this.botMessaging.sendTypingAction(ctx);
       } catch (error) {
         this.logger.error('Failed to send tool message:', error);
       }
@@ -388,7 +394,7 @@ export class StreamManagerService {
     client.on(StreamEventType.TOOL_RESULT, async (data) => {
       const message = this.toolEventFormatter.formatToolResult(data);
       try {
-        await ctx.reply(message);
+        await this.botMessaging.sendAndTrack(ctx, chatId, message);
       } catch (error) {
         this.logger.error('Failed to send tool result message:', error);
       }
@@ -397,7 +403,7 @@ export class StreamManagerService {
     // Handle COMPACTION event
     client.on(StreamEventType.COMPACTION, async () => {
       try {
-        await ctx.reply(BotMessages.CONTEXT_COMPACTED);
+        await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.CONTEXT_COMPACTED);
       } catch (error) {
         this.logger.error('Failed to send compaction message:', error);
       }
@@ -407,12 +413,9 @@ export class StreamManagerService {
     client.on(StreamEventType.COMPLETE, async () => {
       const finalResponse = this.streamBuffers.get(chatId) || '';
 
-      // Add assistant message to conversation history
-      this.sessionOrchestrator.addMessage(
-        chatId,
-        MessageRole.ASSISTANT,
-        finalResponse
-      );
+      // Track final streaming response in conversation history
+      // Note: Text was already sent via CHUNK events, just tracking here
+      this.botMessaging.trackAssistantMessage(chatId, finalResponse);
 
       // Session stays ACTIVE (don't complete session)
       this.stopResponding(chatId);
@@ -421,7 +424,7 @@ export class StreamManagerService {
 
     // Handle ERROR event
     client.on(StreamEventType.ERROR, async (data) => {
-      await ctx.reply(BotMessages.CONVERSATION_FAILED);
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.CONVERSATION_FAILED);
       this.stopResponding(chatId);
       this.cleanup(chatId);
     });
@@ -436,7 +439,7 @@ export class StreamManagerService {
     // Handle connection error
     client.on('error', async (error) => {
       this.logger.error('SSE error:', error);
-      await ctx.reply(BotMessages.CONVERSATION_FAILED);
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.CONVERSATION_FAILED);
       this.stopResponding(chatId);
       this.cleanup(chatId);
     });

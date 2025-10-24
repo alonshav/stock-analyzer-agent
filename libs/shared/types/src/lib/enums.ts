@@ -124,7 +124,7 @@ export interface WorkflowParams {
 // ============================================================================
 
 export const FRAMEWORK_VERSION = 'v2.3';
-export const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+export const DEFAULT_MODEL = 'claude-haiku-4-5-20250514';
 export const DEFAULT_MAX_TURNS = 20;
 export const DEFAULT_MAX_THINKING_TOKENS = 10000;
 

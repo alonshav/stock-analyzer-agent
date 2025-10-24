@@ -40,7 +40,7 @@ export const WORKFLOW_CONFIGS: Record<WorkflowType, WorkflowConfig> = {
   [WorkflowType.FULL_ANALYSIS]: {
     type: WorkflowType.FULL_ANALYSIS,
     systemPrompt: STOCK_VALUATION_FRAMEWORK,
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-haiku-4-5-20250514',
     maxTurns: 20,
     maxThinkingTokens: 10000,
     enabledTools: ['fetch_company_data', 'calculate_dcf'],
@@ -61,7 +61,7 @@ Provide a concise sentiment analysis with:
 - Key positive factors
 - Key negative factors
 - Sentiment trend (improving/stable/declining)`,
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-haiku-4-5-20250514',
     maxTurns: 10,
     maxThinkingTokens: 5000,
     enabledTools: ['fetch_company_data'],
@@ -81,7 +81,7 @@ Provide a comprehensive DCF analysis with:
 - Sensitivity analysis
 - Margin of safety calculation
 - Investment recommendation`,
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-haiku-4-5-20250514',
     maxTurns: 15,
     maxThinkingTokens: 8000,
     enabledTools: ['fetch_company_data', 'calculate_dcf'],
@@ -100,7 +100,7 @@ Provide a peer comparison analysis with:
 - Profitability comparison (margins, ROE, ROIC)
 - Relative positioning (overvalued/fairly valued/undervalued)
 - Investment thesis based on peer analysis`,
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-haiku-4-5-20250514',
     maxTurns: 15,
     maxThinkingTokens: 7000,
     enabledTools: ['fetch_company_data'],

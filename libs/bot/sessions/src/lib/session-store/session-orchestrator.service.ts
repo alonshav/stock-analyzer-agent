@@ -119,6 +119,9 @@ export class SessionOrchestrator {
 
   /**
    * Mark workflow as completed
+   *
+   * CRITICAL: Also adds workflow analysis to conversation history
+   * This enables follow-up questions about the analysis results
    */
   completeWorkflow(
     chatId: string,
@@ -139,6 +142,32 @@ export class SessionOrchestrator {
 
     workflow.completedAt = new Date();
     workflow.result = result;
+
+    // CRITICAL: Add workflow analysis to conversation history
+    // This enables the agent to reference the analysis in follow-up questions
+    if (result) {
+      const ticker = workflow.ticker || 'stock';
+      const workflowType = workflow.workflowType;
+
+      // Add implicit user prompt for context
+      session.conversationHistory.push({
+        role: MessageRole.USER,
+        content: `Perform ${workflowType} for ${ticker}`,
+        timestamp: new Date(),
+      });
+
+      // Add analysis result as assistant message
+      session.conversationHistory.push({
+        role: MessageRole.ASSISTANT,
+        content: result,
+        timestamp: new Date(),
+      });
+
+      this.logger.log(
+        `Added workflow ${workflowId} analysis to conversation history (${result.length} chars)`
+      );
+    }
+
     session.updatedAt = new Date();
     this.sessionRepository.saveSession(session);
 
