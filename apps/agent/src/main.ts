@@ -13,7 +13,8 @@ async function bootstrap() {
   });
 
   const port = process.env.AGENT_PORT || process.env.PORT || 3001;
-  const host = '0.0.0.0';
+  // Use :: to bind to both IPv4 and IPv6 (Railway uses IPv6 for internal networking)
+  const host = '::';
 
   await app.listen(port, host);
 
