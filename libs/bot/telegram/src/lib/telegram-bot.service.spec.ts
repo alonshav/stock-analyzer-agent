@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { TelegramBotService } from './telegram-bot.service';
 import { StreamManagerService } from './stream-manager.service';
+import { BotMessagingService } from './bot-messaging.service';
 import { SessionOrchestrator } from '@stock-analyzer/bot/sessions';
 import {
   ChatSession,
@@ -36,6 +37,7 @@ describe('TelegramBotService', () => {
   let service: TelegramBotService;
   let streamManager: jest.Mocked<StreamManagerService>;
   let sessionOrchestrator: jest.Mocked<SessionOrchestrator>;
+  let botMessaging: jest.Mocked<BotMessagingService>;
 
   const mockSession: ChatSession = {
     sessionId: 'chat123-1234567890',
@@ -92,6 +94,16 @@ describe('TelegramBotService', () => {
             addMessage: jest.fn(),
           },
         },
+        {
+          provide: BotMessagingService,
+          useValue: {
+            sendAndTrack: jest.fn().mockResolvedValue(undefined),
+            trackUserMessage: jest.fn(),
+            trackAssistantMessage: jest.fn(),
+            sendDocumentAndTrack: jest.fn().mockResolvedValue(undefined),
+            sendTypingAction: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -102,6 +114,9 @@ describe('TelegramBotService', () => {
     sessionOrchestrator = module.get(
       SessionOrchestrator
     ) as jest.Mocked<SessionOrchestrator>;
+    botMessaging = module.get(
+      BotMessagingService
+    ) as jest.Mocked<BotMessagingService>;
 
     // Initialize bot to register command handlers
     await service.onApplicationBootstrap();
@@ -149,7 +164,11 @@ describe('TelegramBotService', () => {
         'User started new session'
       );
       expect(sessionOrchestrator.getOrCreateSession).toHaveBeenCalledWith(chatId);
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Started a new conversation session'));
+      expect(botMessaging.sendAndTrack).toHaveBeenCalledWith(
+        ctx,
+        chatId,
+        expect.stringContaining('New Session Started')
+      );
     });
 
     it('should handle /new when no existing session', async () => {
@@ -220,7 +239,9 @@ describe('TelegramBotService', () => {
 
       await textHandler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
+      expect(botMessaging.sendAndTrack).toHaveBeenCalledWith(
+        ctx,
+        '123',
         expect.stringContaining('Please wait')
       );
       expect(streamManager.executeConversation).not.toHaveBeenCalled();
@@ -240,7 +261,9 @@ describe('TelegramBotService', () => {
 
       await textHandler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
+      expect(botMessaging.sendAndTrack).toHaveBeenCalledWith(
+        ctx,
+        '123',
         expect.stringContaining('Failed to start conversation')
       );
     });
@@ -265,7 +288,9 @@ describe('TelegramBotService', () => {
         ctx,
         'http://localhost:3001'
       );
-      expect(ctx.reply).toHaveBeenCalledWith(
+      expect(botMessaging.sendAndTrack).toHaveBeenCalledWith(
+        ctx,
+        chatId,
         expect.stringContaining('Starting analysis for AAPL')
       );
     });
@@ -298,7 +323,9 @@ describe('TelegramBotService', () => {
 
       await analyzeHandler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
+      expect(botMessaging.sendAndTrack).toHaveBeenCalledWith(
+        ctx,
+        '123',
         expect.stringContaining('Please wait')
       );
       expect(streamManager.executeWorkflow).not.toHaveBeenCalled();
@@ -344,12 +371,12 @@ describe('TelegramBotService', () => {
 
       await statusHandler(ctx);
 
-      const replyCall = (ctx.reply as jest.Mock).mock.calls[0][0];
-      expect(replyCall).toContain('Session Status');
-      expect(replyCall).toContain('Messages: 1');
-      expect(replyCall).toContain('Workflows: 2');
-      expect(replyCall).toContain('full_analysis (AAPL) ✓');
-      expect(replyCall).toContain('full_analysis (MSFT) (in progress)');
+      const sendAndTrackCall = (botMessaging.sendAndTrack as jest.Mock).mock.calls[0][2];
+      expect(sendAndTrackCall).toContain('Session Status');
+      expect(sendAndTrackCall).toContain('Messages: 1');
+      expect(sendAndTrackCall).toContain('Workflows: 2');
+      expect(sendAndTrackCall).toContain('full_analysis (AAPL) ✓');
+      expect(sendAndTrackCall).toContain('full_analysis (MSFT) (in progress)');
     });
 
     it('should show message when no active session', async () => {
@@ -364,7 +391,9 @@ describe('TelegramBotService', () => {
 
       await statusHandler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
+      expect(botMessaging.sendAndTrack).toHaveBeenCalledWith(
+        ctx,
+        '123',
         expect.stringContaining('No active session')
       );
     });
@@ -390,7 +419,11 @@ describe('TelegramBotService', () => {
         chatId,
         'User stopped response'
       );
-      expect(ctx.reply).toHaveBeenCalledWith('❌ Stopped.');
+      expect(botMessaging.sendAndTrack).toHaveBeenCalledWith(
+        ctx,
+        chatId,
+        '❌ Stopped.'
+      );
     });
 
     it('should show message when nothing to stop', async () => {
@@ -405,7 +438,9 @@ describe('TelegramBotService', () => {
 
       await stopHandler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
+      expect(botMessaging.sendAndTrack).toHaveBeenCalledWith(
+        ctx,
+        '123',
         expect.stringContaining('Nothing to stop')
       );
       expect(streamManager.stopStream).not.toHaveBeenCalled();

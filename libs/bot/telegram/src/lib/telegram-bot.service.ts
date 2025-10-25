@@ -496,20 +496,7 @@ export class TelegramBotService implements OnApplicationBootstrap {
     await this.botMessaging.sendAndTrack(
       ctx,
       chatId,
-      '👋 Welcome to Stock Analyzer!\n\n' +
-        '💬 Just start chatting! Ask me anything about investing, stocks, or finance.\n\n' +
-        '📊 Commands:\n' +
-        '/analyze TICKER - Run deep analysis (30-60s)\n' +
-        '/status - Check session status\n' +
-        '/new - Start fresh session\n' +
-        '/stop - Cancel current response\n' +
-        '/help - Show this help\n\n' +
-        '💡 Examples:\n' +
-        '• "Explain P/E ratios"\n' +
-        '• "What makes a stock undervalued?"\n' +
-        '• /analyze AAPL (runs full analysis)\n' +
-        '• "What\'s the DCF value?" (after analysis)\n\n' +
-        '⏱️ Sessions persist until you use /new'
+      BotMessages.WELCOME_WITH_DISCLAIMER
     );
   }
 

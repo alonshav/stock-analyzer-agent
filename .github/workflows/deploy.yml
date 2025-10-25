@@ -1,0 +1,44 @@
+name: Deploy to Railway
+
+on:
+  push:
+    branches: [main, production]
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Required for Nx affected commands
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint affected projects
+        run: npx nx affected --target=lint --parallel=3
+
+      - name: Test affected projects
+        run: npx nx affected --target=test --parallel=3 --watch=false
+
+      - name: Build affected apps
+        run: npx nx affected --target=build --configuration=production --parallel=3
+
+      - name: Build summary
+        run: |
+          echo "✅ CI/CD checks passed"
+          echo "📦 Affected apps built successfully"
+          echo "🚀 Railway auto-deployment will trigger via GitHub integration"
+
+# Note: Railway deployment happens automatically via GitHub integration
+# configured in Railway dashboard. This workflow validates the code before
+# Railway starts its deployment process.
