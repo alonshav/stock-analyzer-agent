@@ -753,6 +753,78 @@ npm run start:telegram-bot
 npm run start:agent
 ```
 
+### Railway CLI - Debugging Production Issues
+
+The Railway CLI allows you to view live logs and debug production deployments directly from your terminal.
+
+**Installation:**
+```bash
+# Install via Homebrew (macOS/Linux)
+brew install railway
+
+# Verify installation
+railway --version
+```
+
+**Setup and Usage:**
+```bash
+# 1. Login to Railway (opens browser for authentication)
+railway login
+
+# 2. Link to project (run from project root)
+cd /path/to/stock-analyzer-agent
+railway link
+
+# 3. View logs for a specific service
+railway logs --service=agent           # Agent service logs
+railway logs --service=telegram-bot    # Bot service logs
+
+# 4. Follow logs in real-time
+railway logs --service=agent --follow
+
+# 5. Filter logs by time
+railway logs --service=agent --since=1h   # Last hour
+railway logs --service=agent --since=30m  # Last 30 minutes
+
+# 6. View environment variables
+railway variables --service=agent
+
+# 7. Deploy manually (if needed)
+railway up --service=agent
+```
+
+**Common Debugging Workflow:**
+
+When investigating production crashes:
+
+1. **Check recent agent logs** for error traces:
+   ```bash
+   railway logs --service=agent --since=10m --follow
+   ```
+
+2. **Look for DEBUG output** (enabled in production):
+   ```
+   [AgentService] DEBUG mode enabled for Claude Agent SDK
+   [ProcessTransport] Spawning Claude Code process: ...
+   Claude Code stderr: ...
+   ```
+
+3. **Check bot logs** to see user impact:
+   ```bash
+   railway logs --service=telegram-bot --since=10m
+   ```
+
+4. **Verify environment variables** are set correctly:
+   ```bash
+   railway variables --service=agent
+   ```
+
+**Important Notes:**
+- Railway auto-deploys on git push to `main` branch
+- CLI logs show real-time output from running services
+- Use `--follow` flag to monitor ongoing deployments
+- Each service (agent, telegram-bot) has separate logs
+
 ## Common Patterns
 
 ### Adding a New Tool
