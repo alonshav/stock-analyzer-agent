@@ -776,15 +776,18 @@ cd /path/to/stock-analyzer-agent
 railway link
 
 # 3. View logs for a specific service
-railway logs --service=agent           # Agent service logs
-railway logs --service=telegram-bot    # Bot service logs
+railway logs --service=agent --lines=200     # Last 200 log lines
+railway logs --service=telegram-bot --lines=200
 
-# 4. Follow logs in real-time
-railway logs --service=agent --follow
+# 4. Stream logs in real-time (live monitoring)
+railway logs --service=agent                  # Live streaming
+railway logs --service=agent --filter "@level:error"  # Only errors
 
-# 5. Filter logs by time
-railway logs --service=agent --since=1h   # Last hour
-railway logs --service=agent --since=30m  # Last 30 minutes
+# 5. Filter logs by level or content
+railway logs --service=agent --lines=100 --filter "@level:error"    # Last 100 errors
+railway logs --service=agent --lines=100 --filter "@level:warn"     # Last 100 warnings
+railway logs --service=agent --lines=100 --filter "workflow"        # Search for "workflow"
+railway logs --service=agent --lines=100 --filter "ERROR AND Claude Code"  # Multiple terms
 
 # 6. View environment variables
 railway variables --service=agent
@@ -799,7 +802,8 @@ When investigating production crashes:
 
 1. **Check recent agent logs** for error traces:
    ```bash
-   railway logs --service=agent --since=10m --follow
+   railway logs --service=agent --lines=200
+   railway logs --service=agent --filter "@level:error"
    ```
 
 2. **Look for DEBUG output** (enabled in production):
@@ -811,7 +815,12 @@ When investigating production crashes:
 
 3. **Check bot logs** to see user impact:
    ```bash
-   railway logs --service=telegram-bot --since=10m
+   railway logs --service=telegram-bot --lines=200
+   ```
+
+4. **Stream live logs** during testing:
+   ```bash
+   railway logs --service=agent    # Live stream
    ```
 
 4. **Verify environment variables** are set correctly:
