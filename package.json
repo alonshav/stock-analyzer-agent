@@ -7,8 +7,8 @@
     "dist/apps/mcp-server"
   ],
   "scripts": {
-    "build:telegram-bot": "nx build telegram-bot --configuration=production --skip-nx-cache",
-    "build:agent": "nx build agent --configuration=production --skip-nx-cache",
+    "build:telegram-bot": "nx build telegram-bot --configuration=production",
+    "build:agent": "nx build agent --configuration=production",
     "build:mcp-server": "nx build mcp-server --configuration=production && chmod +x dist/apps/mcp-server/main.js",
     "start:telegram-bot": "node dist/apps/telegram-bot/main.js --skip-nx-cache",
     "start:agent": "node dist/apps/agent/main.js --skip-nx-cache",

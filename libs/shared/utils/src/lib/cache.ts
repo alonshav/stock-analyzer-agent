@@ -31,6 +31,11 @@ export class CacheManager {
       ['cash_flow', 3600],
       ['ratios', 3600],
       ['key_metrics', 3600],
+      ['news_sentiment', 3600], // 1 hour
+      ['social_sentiment', 1800], // 30 minutes
+      ['sentiment_changes', 1800], // 30 minutes
+      ['stock_grades', 86400], // 24 hours
+      ['stock_news', 1800], // 30 minutes
     ]);
 
     // Silent cache events - no logging

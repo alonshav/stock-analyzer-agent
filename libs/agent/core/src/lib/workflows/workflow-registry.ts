@@ -1,5 +1,12 @@
 import { STOCK_VALUATION_FRAMEWORK } from '../prompts/framework-v2.3';
 import {
+  SENTIMENT_WORKFLOW_PROMPT,
+  DCF_VALUATION_WORKFLOW_PROMPT,
+  PEER_COMPARISON_WORKFLOW_PROMPT,
+  EARNINGS_WORKFLOW_PROMPT,
+  NEWS_WORKFLOW_PROMPT,
+} from './prompts';
+import {
   WorkflowType,
   WorkflowConfig,
   AnthropicModel,
@@ -55,36 +62,16 @@ export const WORKFLOW_CONFIGS: Record<WorkflowType, WorkflowConfig> = {
 
   [WorkflowType.SENTIMENT]: {
     type: WorkflowType.SENTIMENT,
-    systemPrompt: `You are a financial sentiment analyzer. Analyze the sentiment of recent news and social media mentions for the given stock ticker. Provide a sentiment score and key insights.
-
-Available tools:
-- fetch_company_data: Get company profile and recent data
-
-Provide a concise sentiment analysis with:
-- Overall sentiment score (0-100)
-- Key positive factors
-- Key negative factors
-- Sentiment trend (improving/stable/declining)`,
+    systemPrompt: SENTIMENT_WORKFLOW_PROMPT,
     model: AnthropicModel.HAIKU_4_5,
-    maxTurns: 10,
-    maxThinkingTokens: 5000,
-    enabledTools: ['fetch_company_data'],
+    maxTurns: 15,
+    maxThinkingTokens: 7000,
+    enabledTools: ['fetch_company_data', 'fetch_sentiment_data'],
   },
 
   [WorkflowType.DCF_VALUATION]: {
     type: WorkflowType.DCF_VALUATION,
-    systemPrompt: `You are a DCF valuation expert. Perform a detailed Discounted Cash Flow analysis for the given stock ticker. Focus on intrinsic value calculation using conservative assumptions.
-
-Available tools:
-- fetch_company_data: Get financial statements and cash flow data
-- calculate_dcf: Perform DCF calculation
-
-Provide a comprehensive DCF analysis with:
-- Intrinsic value estimate
-- Key assumptions (growth rate, discount rate, terminal value)
-- Sensitivity analysis
-- Margin of safety calculation
-- Investment recommendation`,
+    systemPrompt: DCF_VALUATION_WORKFLOW_PROMPT,
     model: AnthropicModel.HAIKU_4_5,
     maxTurns: 15,
     maxThinkingTokens: 8000,
@@ -93,21 +80,29 @@ Provide a comprehensive DCF analysis with:
 
   [WorkflowType.PEER_COMPARISON]: {
     type: WorkflowType.PEER_COMPARISON,
-    systemPrompt: `You are a comparative analysis expert. Compare the given stock ticker against its industry peers across key financial metrics. Identify relative strengths and weaknesses.
-
-Available tools:
-- fetch_company_data: Get company financial data
-
-Provide a peer comparison analysis with:
-- Key valuation metrics comparison (P/E, EV/EBITDA, P/S)
-- Growth metrics comparison (revenue growth, earnings growth)
-- Profitability comparison (margins, ROE, ROIC)
-- Relative positioning (overvalued/fairly valued/undervalued)
-- Investment thesis based on peer analysis`,
+    systemPrompt: PEER_COMPARISON_WORKFLOW_PROMPT,
     model: AnthropicModel.HAIKU_4_5,
     maxTurns: 15,
     maxThinkingTokens: 7000,
     enabledTools: ['fetch_company_data'],
+  },
+
+  [WorkflowType.EARNINGS]: {
+    type: WorkflowType.EARNINGS,
+    systemPrompt: EARNINGS_WORKFLOW_PROMPT,
+    model: AnthropicModel.HAIKU_4_5,
+    maxTurns: 20,
+    maxThinkingTokens: 8000,
+    enabledTools: ['fetch_company_data'],
+  },
+
+  [WorkflowType.NEWS]: {
+    type: WorkflowType.NEWS,
+    systemPrompt: NEWS_WORKFLOW_PROMPT,
+    model: AnthropicModel.HAIKU_4_5,
+    maxTurns: 15,
+    maxThinkingTokens: 7000,
+    enabledTools: ['fetch_company_data', 'fetch_news', 'fetch_sentiment_data'],
   },
 };
 

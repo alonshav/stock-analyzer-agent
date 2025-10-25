@@ -12,6 +12,8 @@ export enum ToolName {
   CALCULATE_DCF = 'calculate_dcf',
   GENERATE_PDF = 'generate_pdf',
   TEST_API_CONNECTION = 'test_api_connection',
+  FETCH_SENTIMENT_DATA = 'fetch_sentiment_data',
+  FETCH_NEWS = 'fetch_news',
 }
 
 /**
@@ -24,6 +26,8 @@ export const MCPToolName = {
   CALCULATE_DCF: `${MCP_TOOL_PREFIX}${ToolName.CALCULATE_DCF}`,
   GENERATE_PDF: `${MCP_TOOL_PREFIX}${ToolName.GENERATE_PDF}`,
   TEST_API_CONNECTION: `${MCP_TOOL_PREFIX}${ToolName.TEST_API_CONNECTION}`,
+  FETCH_SENTIMENT_DATA: `${MCP_TOOL_PREFIX}${ToolName.FETCH_SENTIMENT_DATA}`,
+  FETCH_NEWS: `${MCP_TOOL_PREFIX}${ToolName.FETCH_NEWS}`,
 } as const;
 
 // ============================================================================
@@ -101,6 +105,8 @@ export enum WorkflowType {
   SENTIMENT = 'sentiment',
   DCF_VALUATION = 'dcf_valuation',
   PEER_COMPARISON = 'peer_comparison',
+  EARNINGS = 'earnings',
+  NEWS = 'news',
   // Note: Conversation is not a workflow - it's the default mode
 }
 

@@ -59,11 +59,16 @@ export class TelegramBotService implements OnApplicationBootstrap {
     // Command handlers
     this.bot.command('start', this.handleStartCommand.bind(this));
     this.bot.command('analyze', this.handleAnalyzeCommand.bind(this));
+    this.bot.command('earnings', this.handleEarningsCommand.bind(this));
+    this.bot.command('earnings_summary', this.handleEarningsSummaryCommand.bind(this));
+    this.bot.command('sentiment', this.handleSentimentCommand.bind(this));
+    this.bot.command('news', this.handleNewsCommand.bind(this));
+    this.bot.command('disclaimer', this.handleDisclaimerCommand.bind(this));
     this.bot.command('stop', this.handleStopCommand.bind(this));
     this.bot.command('status', this.handleStatusCommand.bind(this));
     this.bot.command('help', this.handleHelpCommand.bind(this));
-    this.bot.command('new', this.handleNewCommand.bind(this));      // NEW
-    this.bot.command('reset', this.handleResetCommand.bind(this));  // NEW (alias)
+    this.bot.command('new', this.handleNewCommand.bind(this));
+    this.bot.command('reset', this.handleResetCommand.bind(this));
 
     // Message handlers - route to conversation
     this.bot.on('text', this.handleTextMessage.bind(this));
@@ -120,6 +125,212 @@ export class TelegramBotService implements OnApplicationBootstrap {
       this.logger.error(`[${chatId}] Error executing workflow:`, error);
       await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.ANALYSIS_FAILED(ticker));
     }
+  }
+
+  /**
+   * /earnings TICKER [QUARTER] - Execute earnings workflow
+   */
+  private async handleEarningsCommand(ctx: Context) {
+    const message = ctx.message as any;
+    const text = message?.text || '';
+    const args = text.split(' ').slice(1); // Remove '/earnings'
+    const ticker = args[0]?.toUpperCase();
+    const quarter = args[1]?.toUpperCase(); // Optional: Q3, Q3-2024, etc.
+    const chatId = ctx.chat?.id.toString();
+
+    if (!ticker) {
+      await ctx.reply(BotMessages.EARNINGS_USAGE);
+      return;
+    }
+
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+      return;
+    }
+
+    // Check if bot is currently responding
+    if (this.streamManager.isResponding(chatId)) {
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.WAIT_FOR_RESPONSE);
+      return;
+    }
+
+    try {
+      await ctx.sendChatAction('typing');
+
+      await this.botMessaging.sendAndTrack(
+        ctx,
+        chatId,
+        BotMessages.STARTING_EARNINGS_ANALYSIS(ticker, quarter)
+      );
+
+      // Execute workflow
+      // Note: quarter info will be in the workflow prompt, not passed as parameter
+      await this.streamManager.executeWorkflow(
+        chatId,
+        WorkflowType.EARNINGS,
+        ticker,
+        ctx,
+        this.agentUrl
+      );
+    } catch (error) {
+      this.logger.error(`[${chatId}] Error executing earnings workflow:`, error);
+      await this.botMessaging.sendAndTrack(
+        ctx,
+        chatId,
+        BotMessages.EARNINGS_ANALYSIS_FAILED(ticker)
+      );
+    }
+  }
+
+  /**
+   * /earnings_summary TICKER - Quick earnings snapshot
+   */
+  private async handleEarningsSummaryCommand(ctx: Context) {
+    const message = ctx.message as any;
+    const text = message?.text || '';
+    const ticker = text.split(' ')[1]?.toUpperCase();
+    const chatId = ctx.chat?.id.toString();
+
+    if (!ticker) {
+      await ctx.reply(BotMessages.EARNINGS_SUMMARY_USAGE);
+      return;
+    }
+
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+      return;
+    }
+
+    try {
+      await ctx.sendChatAction('typing');
+
+      // Call Agent API for quick summary (NOT workflow, just conversation mode)
+      await this.streamManager.executeConversation(
+        chatId,
+        `Give me a quick earnings summary for ${ticker} latest quarter. Focus on: EPS beat/miss, Revenue beat/miss, YoY growth, guidance. Keep it under 200 words.`,
+        ctx,
+        this.agentUrl
+      );
+    } catch (error) {
+      this.logger.error(`[${chatId}] Error fetching earnings summary:`, error);
+      await this.botMessaging.sendAndTrack(
+        ctx,
+        chatId,
+        BotMessages.EARNINGS_SUMMARY_FAILED(ticker)
+      );
+    }
+  }
+
+  /**
+   * /sentiment TICKER - Execute sentiment workflow
+   */
+  private async handleSentimentCommand(ctx: Context) {
+    const message = ctx.message as any;
+    const text = message?.text || '';
+    const ticker = text.split(' ')[1]?.toUpperCase();
+    const chatId = ctx.chat?.id.toString();
+
+    if (!ticker) {
+      await ctx.reply(BotMessages.SENTIMENT_USAGE);
+      return;
+    }
+
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+      return;
+    }
+
+    if (this.streamManager.isResponding(chatId)) {
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.WAIT_FOR_RESPONSE);
+      return;
+    }
+
+    try {
+      await ctx.sendChatAction('typing');
+      await this.botMessaging.sendAndTrack(
+        ctx,
+        chatId,
+        BotMessages.STARTING_SENTIMENT_ANALYSIS(ticker)
+      );
+
+      await this.streamManager.executeWorkflow(
+        chatId,
+        WorkflowType.SENTIMENT,
+        ticker,
+        ctx,
+        this.agentUrl
+      );
+    } catch (error) {
+      this.logger.error(`[${chatId}] Error executing sentiment workflow:`, error);
+      await this.botMessaging.sendAndTrack(
+        ctx,
+        chatId,
+        BotMessages.SENTIMENT_ANALYSIS_FAILED(ticker)
+      );
+    }
+  }
+
+  /**
+   * /news TICKER - Execute news workflow
+   */
+  private async handleNewsCommand(ctx: Context) {
+    const message = ctx.message as any;
+    const text = message?.text || '';
+    const ticker = text.split(' ')[1]?.toUpperCase();
+    const chatId = ctx.chat?.id.toString();
+
+    if (!ticker) {
+      await ctx.reply(BotMessages.NEWS_USAGE);
+      return;
+    }
+
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+      return;
+    }
+
+    if (this.streamManager.isResponding(chatId)) {
+      await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.WAIT_FOR_RESPONSE);
+      return;
+    }
+
+    try {
+      await ctx.sendChatAction('typing');
+      await this.botMessaging.sendAndTrack(
+        ctx,
+        chatId,
+        BotMessages.STARTING_NEWS_ANALYSIS(ticker)
+      );
+
+      await this.streamManager.executeWorkflow(
+        chatId,
+        WorkflowType.NEWS,
+        ticker,
+        ctx,
+        this.agentUrl
+      );
+    } catch (error) {
+      this.logger.error(`[${chatId}] Error executing news workflow:`, error);
+      await this.botMessaging.sendAndTrack(
+        ctx,
+        chatId,
+        BotMessages.NEWS_ANALYSIS_FAILED(ticker)
+      );
+    }
+  }
+
+  /**
+   * /disclaimer - Show full disclaimer
+   */
+  private async handleDisclaimerCommand(ctx: Context) {
+    const chatId = ctx.chat?.id.toString();
+
+    if (!chatId) {
+      await ctx.reply(BotMessages.UNABLE_TO_IDENTIFY_CHAT);
+      return;
+    }
+
+    await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.DISCLAIMER_FULL);
   }
 
   /**

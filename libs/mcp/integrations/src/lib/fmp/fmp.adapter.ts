@@ -7,6 +7,11 @@ import {
   CashFlowStatement,
   KeyMetrics,
   FinancialRatios,
+  NewsSentiment,
+  SocialSentiment,
+  SentimentChange,
+  StockGrade,
+  StockNews,
 } from '@stock-analyzer/shared/types';
 
 export class FMPAdapter {
@@ -207,9 +212,97 @@ export class FMPAdapter {
     };
   }
 
+  // Sentiment & News endpoints
+
+  async getStockNewsSentiment(ticker: string, page = 0): Promise<NewsSentiment[]> {
+    try {
+      const response = await this.client.get(`/v4/stock-news-sentiments-rss-feed`, {
+        params: { page },
+      });
+
+      // Filter results by ticker since endpoint returns all news
+      const allNews = response.data || [];
+      return allNews.filter((news: NewsSentiment) =>
+        news.symbol?.toUpperCase() === ticker.toUpperCase()
+      );
+    } catch (error) {
+      console.error('Error fetching stock news sentiment:', error);
+      throw error;
+    }
+  }
+
+  async getSocialSentiment(ticker: string): Promise<SocialSentiment | null> {
+    try {
+      const response = await this.client.get(`/v4/historical/social-sentiment`, {
+        params: { symbol: ticker.toUpperCase(), page: 0 },
+      });
+
+      const data = response.data;
+      if (!data || data.length === 0) return null;
+
+      // Return most recent sentiment data
+      return data[0];
+    } catch (error) {
+      console.error('Error fetching social sentiment:', error);
+      throw error;
+    }
+  }
+
+  async getSocialSentimentChanges(ticker: string, source = 'stocktwits', type = 'bullish'): Promise<SentimentChange[]> {
+    try {
+      // Endpoint requires 'source' and 'type' parameters
+      // source: twitter, stocktwits, reddit
+      // type: bullish or bearish
+      const response = await this.client.get(`/v4/social-sentiments/change`, {
+        params: {
+          symbol: ticker.toUpperCase(),
+          source,
+          type,
+        },
+      });
+
+      return response.data || [];
+    } catch (error) {
+      console.error('Error fetching social sentiment changes:', error);
+      // Return empty array instead of throwing if endpoint doesn't exist
+      return [];
+    }
+  }
+
+  async getStockGrades(ticker: string, limit = 10): Promise<StockGrade[]> {
+    try {
+      // Use v3 endpoint as documented
+      const response = await this.client.get(`/v3/grade/${ticker.toUpperCase()}`, {
+        params: { limit },
+      });
+
+      return response.data || [];
+    } catch (error) {
+      console.error('Error fetching stock grades:', error);
+      throw error;
+    }
+  }
+
+  async getStockNews(ticker: string, limit = 20): Promise<StockNews[]> {
+    try {
+      // Use v3 endpoint as documented
+      const response = await this.client.get(`/v3/stock_news`, {
+        params: {
+          tickers: ticker.toUpperCase(),
+          limit,
+        },
+      });
+
+      return response.data || [];
+    } catch (error) {
+      console.error('Error fetching stock news:', error);
+      throw error;
+    }
+  }
+
   async testConnection(): Promise<boolean> {
     try {
-      const response = await this.client.get('/stock-list');
+      const response = await this.client.get('/v3/stock-list');
       return Array.isArray(response.data) && response.data.length > 0;
     } catch (error) {
       console.error('FMP connection test failed:', error);

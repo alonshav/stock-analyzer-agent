@@ -4,6 +4,8 @@ import {DCFCalculator} from './dcf/dcf-calculator';
 import {CacheManager, RateLimiter} from '@stock-analyzer/shared/utils';
 import {generatePDFTool, handleGeneratePDF} from './pdf/generate-pdf-tool';
 import { ToolName } from '@stock-analyzer/shared/types';
+import { SentimentDataFetcher } from './sentiment/sentiment-data-fetcher';
+import { NewsDataFetcher } from './news/news-data-fetcher';
 
 /**
  * Tool Registry for MCP Tools
@@ -16,6 +18,8 @@ import { ToolName } from '@stock-analyzer/shared/types';
 export class ToolRegistry {
   private companyDataFetcher: CompanyDataFetcher;
   private dcfCalculator: DCFCalculator;
+  private sentimentDataFetcher: SentimentDataFetcher;
+  private newsDataFetcher: NewsDataFetcher;
 
   constructor(
     private cacheManager: CacheManager,
@@ -23,6 +27,8 @@ export class ToolRegistry {
   ) {
     this.companyDataFetcher = new CompanyDataFetcher(cacheManager, rateLimiter);
     this.dcfCalculator = new DCFCalculator();
+    this.sentimentDataFetcher = new SentimentDataFetcher(cacheManager, rateLimiter);
+    this.newsDataFetcher = new NewsDataFetcher(cacheManager, rateLimiter);
   }
 
   /**
@@ -113,6 +119,70 @@ DO NOT make multiple calls - all essential data is included in one response.`,
           properties: {},
         },
       },
+      {
+        name: ToolName.FETCH_SENTIMENT_DATA,
+        description: `Fetch sentiment analysis data for a stock ticker.
+
+Returns:
+- News sentiment from multiple sources
+- Social media sentiment (Twitter, Reddit, StockTwits)
+- Analyst ratings and grades
+- Sentiment trend changes
+
+Use this to gauge market mood and investor sentiment for investment decisions.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            ticker: {
+              type: 'string',
+              description: 'Stock ticker symbol (e.g., AAPL, TSLA)',
+            },
+            includeNews: {
+              type: 'boolean',
+              description: 'Include news sentiment analysis',
+              default: true,
+            },
+            includeSocial: {
+              type: 'boolean',
+              description: 'Include social media sentiment',
+              default: true,
+            },
+            includeGrades: {
+              type: 'boolean',
+              description: 'Include analyst grades',
+              default: true,
+            },
+          },
+          required: ['ticker'],
+        },
+      },
+      {
+        name: ToolName.FETCH_NEWS,
+        description: `Fetch recent news articles for a stock ticker.
+
+Returns up to 20 recent news articles with:
+- Headline and summary
+- Publication date and source
+- News URL
+- Related tickers
+
+Use this to understand recent developments affecting the stock.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            ticker: {
+              type: 'string',
+              description: 'Stock ticker symbol',
+            },
+            limit: {
+              type: 'number',
+              description: 'Number of articles to fetch (max 20)',
+              default: 10,
+            },
+          },
+          required: ['ticker'],
+        },
+      },
       generatePDFTool,
     ];
   }
@@ -130,6 +200,10 @@ DO NOT make multiple calls - all essential data is included in one response.`,
         return await this.handleTestApiConnection();
       case ToolName.GENERATE_PDF:
         return await handleGeneratePDF(args);
+      case ToolName.FETCH_SENTIMENT_DATA:
+        return await this.handleFetchSentimentData(args);
+      case ToolName.FETCH_NEWS:
+        return await this.handleFetchNews(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -268,6 +342,50 @@ DO NOT make multiple calls - all essential data is included in one response.`,
         ],
       };
     }
+  }
+
+  private async handleFetchSentimentData(args: any) {
+    const { ticker, includeNews, includeSocial, includeGrades } = args;
+
+    if (!ticker) {
+      throw new Error('Ticker symbol is required');
+    }
+
+    const sentimentData = await this.sentimentDataFetcher.fetchSentimentData(ticker, {
+      includeNews: includeNews !== false,
+      includeSocial: includeSocial !== false,
+      includeGrades: includeGrades !== false,
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(sentimentData, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleFetchNews(args: any) {
+    const { ticker, limit = 10 } = args;
+
+    if (!ticker) {
+      throw new Error('Ticker symbol is required');
+    }
+
+    const newsData = await this.newsDataFetcher.fetchNews(ticker, {
+      limit: Math.min(limit, 20), // Cap at 20
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(newsData, null, 2),
+        },
+      ],
+    };
   }
 
   /**
