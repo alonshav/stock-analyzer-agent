@@ -54,13 +54,34 @@ export interface BotMessagesType {
  */
 export const BotMessages: BotMessagesType = {
   // Session management
-  NEW_SESSION: `Started a new conversation session.
+  NEW_SESSION: `🔄 New Session Started!
 
-You can:
-• Ask me any financial questions
-• Use /analyze TICKER for full stock analysis
-• Use /status to see current session info
-• Use /help for more commands`,
+Previous conversation cleared. Let's start fresh!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Available Commands:
+
+Analysis:
+  /analyze TICKER - Full stock analysis + DCF
+  /earnings TICKER [Q] - Quarterly earnings analysis
+  /earnings_summary TICKER - Quick earnings snapshot
+  /sentiment TICKER - Market sentiment analysis
+  /news TICKER - Recent news impact
+
+Session:
+  /status - View session info
+  /new or /reset - Start another fresh session
+  /help - Show all commands
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💬 You can also ask questions naturally:
+  "What's AAPL's P/E ratio?"
+  "Compare TSLA to RIVN"
+  "Explain free cash flow"
+
+Ready when you are!`,
 
   NEW_SESSION_FAILED: 'Failed to start new session. Please try again.',
 
@@ -157,7 +178,7 @@ By using this bot, you acknowledge:
 
 Questions? Contact support.`,
 
-  WELCOME_WITH_DISCLAIMER: `👋 Welcome to Stock Analyzer!
+  WELCOME_WITH_DISCLAIMER: `👋 Welcome to Stock Analyzer${process.env['NODE_ENV'] === 'development' ? ' 🔧 [DEV]' : ''}!
 
 ⚠️ DISCLAIMER
 This bot provides educational analysis only.
@@ -167,28 +188,72 @@ licensed financial advisor.
 
 By continuing, you acknowledge the above.
 
-💬 Ask me anything about stocks
-📊 Get comprehensive company analyses
-📈 Analyze quarterly earnings reports
-📰 Track news and sentiment
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Quick start:
-• Try: /analyze AAPL
-• Try: /earnings TSLA
-• Or just ask a question!
+🎯 WHAT I CAN DO:
 
-Type /disclaimer anytime to see full terms.`,
+📊 Stock Analysis Commands:
+  /analyze TICKER
+  → Full comprehensive analysis with DCF valuation
+  → Includes PDF report (2-3 minutes)
 
-  WELCOME_BACK: `👋 Welcome back to Stock Analyzer!
+  /earnings TICKER [Q]
+  → Deep quarterly earnings analysis
+  → Example: /earnings AAPL Q4
 
-💬 Ask me anything about stocks
-📊 Get comprehensive analyses
-📈 Analyze quarterly earnings
+  /earnings_summary TICKER
+  → Quick earnings snapshot (30 seconds)
 
-Ready when you are!`,
+  /sentiment TICKER
+  → Market sentiment from news & social media
+
+  /news TICKER
+  → Recent news impact analysis
+
+💬 Conversation Mode:
+  After running an analysis, you can ask follow-up
+  questions naturally:
+  • "What's the P/E ratio?"
+  • "Compare to MSFT"
+  • "What are the risks?"
+
+🛠️ Utility Commands:
+  /status - View your active session
+  /new or /reset - Start fresh analysis
+  /disclaimer - View full legal terms
+  /help - Show command list
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 QUICK START:
+
+1️⃣ Run an analysis:
+   /analyze AAPL
+
+2️⃣ Ask follow-up questions:
+   "What's driving the valuation?"
+
+3️⃣ Try other commands:
+   /sentiment TSLA
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Need help? Type /help anytime!`,
+
+  WELCOME_BACK: `👋 Welcome back to Stock Analyzer${process.env['NODE_ENV'] === 'development' ? ' 🔧 [DEV]' : ''}!
+
+📊 Quick Commands:
+  /analyze TICKER - Full analysis with DCF
+  /earnings TICKER - Quarterly earnings deep-dive
+  /sentiment TICKER - Market sentiment analysis
+  /news TICKER - Recent news impact
+
+💬 Or just ask a question naturally!
+
+Type /help to see all commands.`,
 
   // Help
-  HELP_TEXT: `Stock Analyzer Bot
+  HELP_TEXT: `Stock Analyzer Bot${process.env['NODE_ENV'] === 'development' ? ' 🔧 [DEV]' : ''}
 
 Commands:
 /analyze TICKER - Full stock analysis

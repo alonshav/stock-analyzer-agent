@@ -199,11 +199,75 @@ const tools = registry.getTools(); // Returns Tool[] for Anthropic SDK
 const registry = createToolRegistry();
 // Used internally by StockAnalysisMCPServer
 
-// Tools available:
+// Tools available (January 2025 - Updated):
 // - fetch_company_data: Get financial data from FMP API
 // - calculate_dcf: Perform DCF valuation
+// - fetch_sentiment_data: Get news sentiment, social sentiment, analyst grades
+// - fetch_news: Get recent news articles for ticker
+// - generate_pdf: Generate PDF reports via Anvil API
 // - test_api_connection: Test FMP API connectivity
 ```
+
+## Workflow Types & Commands
+
+Located in `libs/agent/core/src/lib/workflows/workflow-registry.ts`:
+
+**Available Workflows** (January 2025 - Complete):
+
+| Workflow | Bot Command | Duration | Tools | Description |
+|----------|-------------|----------|-------|-------------|
+| `FULL_ANALYSIS` | `/analyze TICKER` | 2-3 min | fetch_company_data, calculate_dcf | Comprehensive 6-phase stock valuation |
+| `SENTIMENT` | `/sentiment TICKER` | 1-2 min | fetch_company_data, fetch_sentiment_data | Market sentiment analysis (news + social) |
+| `NEWS` | `/news TICKER` | 1-2 min | fetch_company_data, fetch_news, fetch_sentiment_data | Recent news impact analysis |
+| `EARNINGS` | `/earnings TICKER [Q]` | 2-3 min | fetch_company_data | Quarterly earnings analysis |
+| `DCF_VALUATION` | N/A | 2-3 min | fetch_company_data, calculate_dcf | Deep-dive DCF valuation |
+| `PEER_COMPARISON` | N/A | 2-3 min | fetch_company_data | Comparative industry analysis |
+
+**Additional Commands:**
+- `/earnings_summary TICKER` - Quick earnings snapshot (text-only, 30s)
+- `/disclaimer` - Show financial disclaimer
+- `/status` - View active session info
+- `/new` or `/reset` - Start fresh session
+- `/help` - Show all commands
+
+**Workflow System Prompts:**
+All workflow-specific prompts are extracted to `libs/agent/core/src/lib/workflows/prompts.ts` for maintainability. The `BASE_SYSTEM_PROMPT` is prepended to all workflows automatically.
+
+## FMP API Integration & Sentiment Data
+
+**New Tools (January 2025):**
+
+### fetch_sentiment_data
+Located in `libs/mcp/tools/src/lib/sentiment/sentiment-data-fetcher.ts`
+
+Aggregates sentiment data from multiple FMP API endpoints:
+- **News Sentiment** (`/v4/stock-news-sentiments-rss-feed`) - News with sentiment scores (positive/negative/neutral)
+- **Social Sentiment** (`/v4/historical/social-sentiment`) - StockTwits + Twitter metrics
+- **Sentiment Changes** (`/v4/social-sentiments/change`) - Sentiment momentum tracking
+- **Stock Grades** (`/v3/grade/`) - Analyst rating changes
+
+**Caching Strategy:**
+- News sentiment: 1 hour TTL
+- Social sentiment: 30 min TTL
+- Stock grades: 24 hours TTL
+
+### fetch_news
+Located in `libs/mcp/tools/src/lib/news/news-data-fetcher.ts`
+
+Fetches recent news articles from FMP API (`/v3/stock_news`):
+- Returns up to 20 recent articles
+- 30-minute cache TTL
+- Fields: title, publishedDate, url, text, site, image
+
+**Type Definitions:**
+All sentiment types defined in `libs/shared/types/src/lib/sentiment.types.ts`:
+- `NewsSentiment` - News with sentiment scores
+- `SocialSentiment` - Social media metrics (StockTwits, Twitter)
+- `SentimentChange` - Sentiment change over time
+- `StockGrade` - Analyst rating changes
+- `StockNews` - General news articles
+
+**Note:** Reddit data is NOT available in FMP API (fields marked optional in `SocialSentiment`).
 
 ## Agent Implementation Pattern
 
@@ -522,7 +586,7 @@ isToolName('mcp__stock-analyzer__fetch_company_data', ToolName.FETCH_COMPANY_DAT
 isToolName('fetch_company_data', ToolName.FETCH_COMPANY_DATA) // true
 ```
 
-**Tool Names Enum**:
+**Tool Names Enum** (January 2025 - Updated):
 
 ```typescript
 export enum ToolName {
@@ -530,6 +594,8 @@ export enum ToolName {
   CALCULATE_DCF = 'calculate_dcf',
   GENERATE_PDF = 'generate_pdf',
   TEST_API_CONNECTION = 'test_api_connection',
+  FETCH_SENTIMENT_DATA = 'fetch_sentiment_data',  // NEW
+  FETCH_NEWS = 'fetch_news',                      // NEW
 }
 
 // MCP-prefixed versions (as they appear in Agent SDK)
@@ -538,6 +604,8 @@ export const MCPToolName = {
   CALCULATE_DCF: 'mcp__stock-analyzer__calculate_dcf',
   GENERATE_PDF: 'mcp__stock-analyzer__generate_pdf',
   TEST_API_CONNECTION: 'mcp__stock-analyzer__test_api_connection',
+  FETCH_SENTIMENT_DATA: 'mcp__stock-analyzer__fetch_sentiment_data',  // NEW
+  FETCH_NEWS: 'mcp__stock-analyzer__fetch_news',                      // NEW
 } as const;
 ```
 
@@ -553,10 +621,25 @@ ANVIL_API_KEY=...            # PDF generation
 ```
 
 ### Telegram Bot (Port 3002)
+
+**Development (Local):**
 ```bash
-TELEGRAM_BOT_TOKEN=...
+NODE_ENV=development
+TELEGRAM_BOT_TOKEN=...       # DEV bot token (from .env file)
 AGENT_SERVICE_URL=http://localhost:3001
 ```
+
+**Production (Railway):**
+```bash
+NODE_ENV=production
+TELEGRAM_BOT_TOKEN=...       # PROD bot token (set in Railway dashboard)
+AGENT_SERVICE_URL=...        # Railway internal URL for agent service
+```
+
+**Bot Environment Indicators:**
+- Development bot shows **🔧 [DEV]** badge in responses (when `NODE_ENV=development`)
+- Production bot shows no badge
+- See `DEV_VS_PROD.md` for detailed setup instructions
 
 ### MCP Server (Standalone)
 ```bash
@@ -607,6 +690,7 @@ Located in `libs/agent/core/src/lib/prompts/framework-v2.3.ts`:
 
 ## Key Financial Data Types
 
+### Company & Financial Data
 Located in `libs/shared/types/src/lib/company.types.ts`:
 
 - `CompanyProfile` - Company metadata, industry, sector, market cap
@@ -617,6 +701,15 @@ Located in `libs/shared/types/src/lib/company.types.ts`:
 - `KeyMetrics` - P/E, ROE, ROA, debt ratios
 - `FinancialRatios` - Liquidity, profitability, solvency ratios
 - `CompanyData` - Aggregates all financial data types
+
+### Sentiment Data (January 2025 - New)
+Located in `libs/shared/types/src/lib/sentiment.types.ts`:
+
+- `NewsSentiment` - News with sentiment scores (positive/negative/neutral)
+- `SocialSentiment` - Social media metrics (StockTwits, Twitter)
+- `SentimentChange` - Sentiment change over time for momentum tracking
+- `StockGrade` - Analyst rating changes (e.g., Buy → Hold)
+- `StockNews` - General news articles (no sentiment scores)
 
 ## Build Configuration
 
