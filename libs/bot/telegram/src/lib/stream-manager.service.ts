@@ -24,6 +24,7 @@ export class StreamManagerService {
   private readonly streamBuffers = new Map<string, string>();
   private readonly activeResponses = new Set<string>();
   private readonly workflowIds = new Map<string, string>(); // chatId -> workflowId
+  private readonly handledErrors = new Set<string>(); // Guard against duplicate error handling
 
   constructor(
     private readonly sessionOrchestrator: SessionOrchestrator,
@@ -320,6 +321,13 @@ export class StreamManagerService {
 
     // Handle ERROR event
     client.on(StreamEventType.ERROR, async (data) => {
+      // Guard: prevent duplicate error handling
+      if (this.handledErrors.has(chatId)) {
+        this.logger.debug(`[${chatId}] Error already handled, skipping duplicate`);
+        return;
+      }
+      this.handledErrors.add(chatId);
+
       await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.ANALYSIS_FAILED(ticker));
       this.stopResponding(chatId);
       this.cleanup(chatId);
@@ -328,13 +336,24 @@ export class StreamManagerService {
     // Handle connection close
     client.on('close', () => {
       this.logger.log(`Connection closed for chat ${chatId}`);
-      this.stopResponding(chatId);
-      this.cleanup(chatId);
+      // Don't send error message on clean close - just cleanup
+      if (!this.handledErrors.has(chatId)) {
+        this.stopResponding(chatId);
+        this.cleanup(chatId);
+      }
     });
 
     // Handle connection error
     client.on('error', async (error) => {
       this.logger.error('SSE error:', error);
+
+      // Guard: prevent duplicate error handling
+      if (this.handledErrors.has(chatId)) {
+        this.logger.debug(`[${chatId}] Error already handled, skipping duplicate`);
+        return;
+      }
+      this.handledErrors.add(chatId);
+
       await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.ANALYSIS_FAILED(ticker));
       this.stopResponding(chatId);
       this.cleanup(chatId);
@@ -424,6 +443,13 @@ export class StreamManagerService {
 
     // Handle ERROR event
     client.on(StreamEventType.ERROR, async (data) => {
+      // Guard: prevent duplicate error handling
+      if (this.handledErrors.has(chatId)) {
+        this.logger.debug(`[${chatId}] Error already handled, skipping duplicate`);
+        return;
+      }
+      this.handledErrors.add(chatId);
+
       await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.CONVERSATION_FAILED);
       this.stopResponding(chatId);
       this.cleanup(chatId);
@@ -432,13 +458,24 @@ export class StreamManagerService {
     // Handle connection close
     client.on('close', () => {
       this.logger.log(`Connection closed for chat ${chatId}`);
-      this.stopResponding(chatId);
-      this.cleanup(chatId);
+      // Don't send error message on clean close - just cleanup
+      if (!this.handledErrors.has(chatId)) {
+        this.stopResponding(chatId);
+        this.cleanup(chatId);
+      }
     });
 
     // Handle connection error
     client.on('error', async (error) => {
       this.logger.error('SSE error:', error);
+
+      // Guard: prevent duplicate error handling
+      if (this.handledErrors.has(chatId)) {
+        this.logger.debug(`[${chatId}] Error already handled, skipping duplicate`);
+        return;
+      }
+      this.handledErrors.add(chatId);
+
       await this.botMessaging.sendAndTrack(ctx, chatId, BotMessages.CONVERSATION_FAILED);
       this.stopResponding(chatId);
       this.cleanup(chatId);
@@ -500,5 +537,6 @@ export class StreamManagerService {
 
     this.streamBuffers.delete(chatId);
     this.workflowIds.delete(chatId);
+    this.handledErrors.delete(chatId); // Clean up error guard
   }
 }

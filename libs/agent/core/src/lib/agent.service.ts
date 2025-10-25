@@ -84,6 +84,12 @@ export class AgentService {
     // Set API key for Claude Agent SDK
     process.env['ANTHROPIC_API_KEY'] = apiKey;
 
+    // Enable debug logging in production to diagnose issues
+    if (process.env['NODE_ENV'] === 'production') {
+      process.env['DEBUG'] = '1';
+      this.logger.log('DEBUG mode enabled for Claude Agent SDK');
+    }
+
     this.toolRegistry = createToolRegistry();
 
     // Convert MCP tools to SDK tools
@@ -205,13 +211,23 @@ export class AgentService {
       );
       return result;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : '';
+
       this.logger.error(`[${sessionId}] Workflow failed:`, error);
+      this.logger.error(`[${sessionId}] Error details:`, {
+        message: errorMessage,
+        stack: errorStack,
+        sessionId,
+        ticker,
+        workflowType,
+      });
 
       // Emit error event
       this.eventEmitter.emit(`stream.${sessionId}`, {
         type: StreamEventType.ERROR,
         sessionId,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: errorMessage,
         timestamp: new Date().toISOString(),
       });
 
@@ -260,13 +276,22 @@ export class AgentService {
       this.logger.log(`[${sessionId}] Conversation completed`);
       return response;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : '';
+
       this.logger.error(`[${sessionId}] Conversation failed:`, error);
+      this.logger.error(`[${sessionId}] Error details:`, {
+        message: errorMessage,
+        stack: errorStack,
+        sessionId,
+        userMessage: userMessage.substring(0, 100),
+      });
 
       // Emit error event
       this.eventEmitter.emit(`stream.${sessionId}`, {
         type: StreamEventType.ERROR,
         sessionId,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: errorMessage,
         timestamp: new Date().toISOString(),
       });
 
